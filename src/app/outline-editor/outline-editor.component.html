@@ -19,22 +19,18 @@
     </header>
 
     <div class="editor-scroll" tabindex="0" role="region" aria-label="Outline content">
-      <div class="editor-wrapper"
-           [class.drag-target]="editorDragOver"
-           (dragover)="onEditorDragOver($event)"
-           (dragleave)="onEditorDragLeave()"
-           (drop)="onEditorDrop($event)">
+      <div class="editor-wrapper">
 
-        <!-- Heading drag handles -->
-        @for (h of headingHandles; track h.index) {
-          <div class="heading-drag-handle"
+        <!-- Line drag handles for ALL block-level lines -->
+        @for (h of lineHandles; track h.index) {
+          <div class="line-drag-handle"
                [style.top.px]="h.top"
-               draggable="true"
-               (dragstart)="onHeadingDragStart($event, h)"
-               (dragend)="onHeadingDragEnd()"
-               title="Drag to move this section"
+               [class.line-selected]="isLineSelected(h.index)"
+               (mousedown)="onLineHandleMouseDown($event, h)"
+               (click)="onLineClick($event, h)"
+               title="Drag to move this line"
                role="button"
-               aria-label="Drag to reorder section">
+               aria-label="Drag to reorder line">
             <span class="material-icons" aria-hidden="true">drag_indicator</span>
           </div>
         }
@@ -61,10 +57,8 @@
           @for (source of sampleSources; track source.url) {
             <div class="source-card">
               <div class="source-card-main"
-                   draggable="true"
-                   (dragstart)="onSourceDragStart($event, source)"
-                   (dragend)="onSourceDragEnd()"
-                   (click)="openPreview(source)"
+                   (mousedown)="onSourceMouseDown($event, source)"
+                   (click)="onSourceClick($event, source)"
                    role="button"
                    [attr.aria-label]="'Source: ' + source.title">
                 <img class="source-favicon"

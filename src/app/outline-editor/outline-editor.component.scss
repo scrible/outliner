@@ -107,6 +107,22 @@
     padding: 0;
     min-height: 400px;
 
+    // Hover/focus visual feedback for all block-level children
+    > * {
+      border-radius: 4px;
+      transition: background 0.1s, border-color 0.1s, opacity 0.15s;
+      border: 1px solid transparent;
+      padding-left: 4px;
+      padding-right: 4px;
+      margin-left: -5px;
+      margin-right: -5px;
+
+      &:hover {
+        background: #f8f9fa;
+        border-color: #e5e7eb;
+      }
+    }
+
     h1 {
       font-size: 22px;
       font-weight: 700;
@@ -153,6 +169,17 @@
     .ql-indent-1 { padding-left: 2em; }
     .ql-indent-2 { padding-left: 4em; }
     .ql-indent-3 { padding-left: 6em; }
+
+    // Dragging source element — reduced opacity
+    .dragging-source {
+      opacity: 0.35 !important;
+    }
+
+    // Selected line highlight
+    .line-selected-highlight {
+      background: #ecfdf5 !important;
+      border-color: #a7f3d0 !important;
+    }
   }
 
   .ql-tooltip {
@@ -166,8 +193,8 @@
   }
 }
 
-// Heading drag handles
-.heading-drag-handle {
+// Line drag handles — shown for ALL block-level lines
+.line-drag-handle {
   position: absolute;
   left: 16px;
   width: 24px;
@@ -179,15 +206,44 @@
   color: #d1d5db;
   border-radius: 4px;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
   z-index: 2;
+  user-select: none;
 
-  &:hover { opacity: 1 !important; color: #6b7280; background: #f3f4f6; }
+  &:hover {
+    opacity: 1 !important;
+    color: #6b7280;
+    background: #f3f4f6;
+  }
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &.line-selected {
+    opacity: 1 !important;
+    color: #0a7a70;
+    background: #ecfdf5;
+  }
+
   .material-icons { font-size: 18px; }
 }
 
-.editor-wrapper:hover .heading-drag-handle {
+.editor-wrapper:hover .line-drag-handle {
   opacity: 0.5;
+}
+
+// Drop indicator line (injected dynamically)
+.drop-indicator-line {
+  position: absolute;
+  left: 56px;
+  right: 24px;
+  height: 2px;
+  background: #0a7a70;
+  z-index: 9999;
+  pointer-events: none;
+  border-radius: 1px;
+  box-shadow: 0 0 4px rgba(10,122,112,0.4);
 }
 
 // --- Preview Panel ---
@@ -250,6 +306,7 @@
     min-width: 0;
     cursor: grab;
     padding: 4px 0;
+    user-select: none;
     &:active { cursor: grabbing; }
   }
 
@@ -295,13 +352,6 @@
   cursor: pointer;
   transition: all 0.12s;
   &:hover { background: #0a7a70; color: white; border-color: #0a7a70; }
-}
-
-.editor-wrapper.drag-target {
-  outline: 2px dashed #0a7a70;
-  outline-offset: -2px;
-  border-radius: 8px;
-  background: #f0fdf9;
 }
 
 .preview-nav {

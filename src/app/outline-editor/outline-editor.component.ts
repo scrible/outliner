@@ -3,6 +3,31 @@ import { CommonModule } from '@angular/common';
 import { SafeUrlPipe } from '../safe-url.pipe';
 import Quill from 'quill';
 
+interface LineInfo {
+  el: HTMLElement;
+  index: number;
+  length: number;
+  rect: DOMRect;
+}
+
+interface DragState {
+  type: 'line' | 'source';
+  /** For line drag: the Quill index of the dragged line */
+  lineIndex?: number;
+  lineLength?: number;
+  lineEl?: HTMLElement;
+  /** For source drag */
+  source?: any;
+  /** Mouse offset from the drag handle */
+  offsetY: number;
+  /** The floating preview element */
+  floatingEl?: HTMLElement;
+  /** The drop indicator line */
+  indicatorEl?: HTMLElement;
+  /** Current drop target line index in Quill */
+  dropBeforeIndex?: number;
+}
+
 @Component({
   selector: 'app-outline-editor',
   standalone: true,
@@ -21,10 +46,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   showPreview = false;
   previewLoading = false;
 
-  // Drag state tracked in component — avoids dataTransfer cross-element issues
-  draggedSource: any = null;
-  editorDragOver = false;
-
   sampleSources = [
     { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024' },
     { title: 'Mars 2020 Perseverance Rover', url: 'https://science.nasa.gov/mission/mars-2020-perseverance/', author: 'NASA Science', date: '2024' },
@@ -32,8 +53,23 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     { title: 'SpaceX Starship', url: 'https://www.spacex.com/vehicles/starship/', author: 'SpaceX', date: '2024' },
   ];
 
-  headingHandles: { el: HTMLElement; top: number; index: number }[] = [];
-  draggedHeadingIndex: number | null = null;
+  // Line handles for ALL block-level lines
+  lineHandles: { el: HTMLElement; top: number; index: number; length: number }[] = [];
+
+  // Keyboard navigation
+  selectedLineIndex: number | null = null;
+  hoveredLineIndex: number | null = null;
+
+  // Drag state
+  private dragState: DragState | null = null;
+
+  // Source drag: pending state before threshold is met
+  private pendingSourceDrag: { source: any; startX: number; startY: number } | null = null;
+  private sourceJustDragged = false;
+
+  // Bound listeners for cleanup
+  private boundMouseMove: ((e: MouseEvent) => void) | null = null;
+  private boundMouseUp: ((e: MouseEvent) => void) | null = null;
 
   constructor(private zone: NgZone, private cdr: ChangeDetectorRef) {}
 
@@ -60,41 +96,29 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       },
     });
 
-    // Intercept drop events in capture phase BEFORE Quill's clipboard module sees them
+    // Disable native drag/drop on the editor entirely
     const editorEl = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
     if (editorEl) {
-      editorEl.addEventListener('dragover', (e: DragEvent) => {
-        if (this.draggedSource || this.draggedHeadingIndex !== null) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          if (e.dataTransfer) e.dataTransfer.dropEffect = this.draggedSource ? 'copy' : 'move';
-        }
-      }, true); // capture phase
-
-      editorEl.addEventListener('drop', (e: DragEvent) => {
-        if (this.draggedSource) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          this.handleSourceDrop(e);
-        } else if (this.draggedHeadingIndex !== null) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          this.handleHeadingDrop(e);
-        }
-      }, true); // capture phase
+      editorEl.addEventListener('dragover', (e: DragEvent) => { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+      editorEl.addEventListener('drop', (e: DragEvent) => { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+      editorEl.addEventListener('dragstart', (e: DragEvent) => { e.preventDefault(); e.stopImmediatePropagation(); }, true);
     }
 
     this.loadDemoContent();
-    setTimeout(() => this.updateHeadingHandles(), 300);
+    setTimeout(() => this.updateLineHandles(), 300);
 
     this.quill.on('text-change', () => {
-      requestAnimationFrame(() => this.updateHeadingHandles());
+      requestAnimationFrame(() => this.updateLineHandles());
     });
   }
 
-  ngOnDestroy() {}
+  ngOnDestroy() {
+    this.cleanupDrag();
+  }
 
-  // --- Source Preview ---
+  // ──────────────────────────────────────
+  // Source Preview (unchanged)
+  // ──────────────────────────────────────
   openPreview(source: { title: string; url: string }) {
     this.previewUrl = source.url;
     this.previewTitle = source.title;
@@ -102,7 +126,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.previewLoading = true;
     this.previewHtml = '';
 
-    // Try corsproxy.io first, then allorigins as fallback
     this.fetchWithProxy(source.url)
       .then(html => {
         const base = `<base href="${source.url}"><style>body{font-family:system-ui,sans-serif;}</style>`;
@@ -120,7 +143,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   private async fetchWithProxy(url: string): Promise<string> {
-    // Try multiple CORS proxies in order
     const proxies = [
       `https://corsproxy.io/?${encodeURIComponent(url)}`,
       `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -146,73 +168,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.previewTitle = 'Source Preview';
   }
 
-  // --- Citation Drag & Drop (component-state approach) ---
-  onSourceDragStart(event: DragEvent, source: any) {
-    this.draggedSource = source;
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'copy';
-      event.dataTransfer.setData('text/plain', this.formatMLA(source));
-    }
-  }
-
-  onSourceDragEnd() {
-    this.draggedSource = null;
-    this.editorDragOver = false;
-  }
-
-  onEditorDragOver(event: DragEvent) {
-    if (!this.draggedSource) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-    this.editorDragOver = true;
-  }
-
-  onEditorDragLeave() {
-    this.editorDragOver = false;
-  }
-
-  onEditorDrop(event: DragEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    this.editorDragOver = false;
-
-    if (!this.draggedSource) return;
-    const source = this.draggedSource;
-    this.draggedSource = null;
-
-    const citation = this.formatMLA(source);
-
-    // Find insert position from drop coordinates
-    let insertIndex = this.quill.getLength() - 1;
-    try {
-      const caretRange = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
-      if (caretRange) {
-        const blot = this.quill.scroll.find(caretRange.startContainer, true);
-        if (blot) {
-          const blotIndex = this.quill.getIndex(blot as any);
-          const [line] = this.quill.getLine(blotIndex);
-          if (line) {
-            insertIndex = this.quill.getIndex(line as any) + line.length();
-          }
-        }
-      }
-    } catch {}
-
-    // Insert citation as blockquote
-    this.quill.insertText(insertIndex, '\n', 'user');
-    this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
-    this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
-    this.quill.setSelection(insertIndex + 2 + citation.length, 0);
-  }
-
-  // "Cite" button fallback — always works
+  // ──────────────────────────────────────
+  // Citation insertion (Cite button)
+  // ──────────────────────────────────────
   insertCitation(source: any) {
     const citation = this.formatMLA(source);
     const sel = this.quill.getSelection();
     let insertIndex = sel ? sel.index : this.quill.getLength() - 1;
 
-    // Go to end of current line
     try {
       const [line] = this.quill.getLine(insertIndex);
       if (line) insertIndex = this.quill.getIndex(line as any) + line.length();
@@ -233,129 +196,564 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     return `${author}. ${title}. ${date}. Web. ${accessed}.`;
   }
 
-  // --- Heading Drag (within editor) ---
-  onHeadingDragStart(event: DragEvent, handle: any) {
-    this.draggedHeadingIndex = handle.index;
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', ''); // required for Firefox
+  // ──────────────────────────────────────
+  // Line handles — for ALL block-level lines
+  // ──────────────────────────────────────
+  updateLineHandles() {
+    const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
+    if (!editor) return;
+
+    const handles: typeof this.lineHandles = [];
+    const wrapperRect = this.editorContainer.nativeElement.closest('.editor-wrapper')?.getBoundingClientRect();
+    if (!wrapperRect) return;
+
+    // Walk all block-level elements, including li inside ol/ul
+    const addBlock = (el: HTMLElement) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.height === 0) return;
+      const blot = this.quill.scroll.find(el, true);
+      if (!blot) return;
+      try {
+        const index = this.quill.getIndex(blot as any);
+        const len = (blot as any).length ? (blot as any).length() : 1;
+        handles.push({ el, top: rect.top - wrapperRect.top, index, length: len });
+      } catch {}
+    };
+
+    for (let i = 0; i < editor.children.length; i++) {
+      const el = editor.children[i] as HTMLElement;
+      const tag = el.tagName;
+      if (tag === 'OL' || tag === 'UL') {
+        // Recurse into list items
+        for (let j = 0; j < el.children.length; j++) {
+          addBlock(el.children[j] as HTMLElement);
+        }
+      } else {
+        addBlock(el);
+      }
+    }
+    this.lineHandles = handles;
+    this.cdr.detectChanges();
+  }
+
+  // ──────────────────────────────────────
+  // Mouse-based line drag
+  // ──────────────────────────────────────
+  onLineHandleMouseDown(event: MouseEvent, handle: { el: HTMLElement; top: number; index: number; length: number }) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const rect = handle.el.getBoundingClientRect();
+
+    this.dragState = {
+      type: 'line',
+      lineIndex: handle.index,
+      lineLength: handle.length,
+      lineEl: handle.el,
+      offsetY: event.clientY - rect.top,
+    };
+
+    // Reduce opacity of original
+    handle.el.classList.add('dragging-source');
+
+    // Create floating preview
+    this.createFloatingPreview(handle.el, event.clientX, event.clientY);
+
+    // Create drop indicator
+    this.createDropIndicator();
+
+    this.attachGlobalListeners();
+  }
+
+  // ──────────────────────────────────────
+  // Mouse-based source drag
+  // ──────────────────────────────────────
+  onSourceMouseDown(event: MouseEvent, source: any) {
+    // Only trigger on left button
+    if (event.button !== 0) return;
+
+    // Set up pending drag — will activate after mouse moves beyond threshold
+    this.pendingSourceDrag = {
+      source,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    this.sourceJustDragged = false;
+
+    const onMove = (e: MouseEvent) => {
+      if (!this.pendingSourceDrag) return;
+      const dx = e.clientX - this.pendingSourceDrag.startX;
+      const dy = e.clientY - this.pendingSourceDrag.startY;
+      if (Math.sqrt(dx * dx + dy * dy) < 5) return; // threshold
+
+      // Activate drag
+      const src = this.pendingSourceDrag.source;
+      this.pendingSourceDrag = null;
+      this.sourceJustDragged = true;
+      (window as any).__sourceDragActivated = true;
+      (window as any).__globalMoveCount = 0; // reset counter
+
+      this.dragState = {
+        type: 'source',
+        source: src,
+        offsetY: 0,
+      };
+
+      const tempDiv = document.createElement('div');
+      tempDiv.textContent = this.formatMLA(src);
+      tempDiv.style.cssText = 'font-size:12px;color:#78600e;background:#fffbf0;border-left:3px solid #d4a843;padding:4px 8px;max-width:300px;border-radius:4px;';
+      document.body.appendChild(tempDiv);
+
+      this.dragState.floatingEl = this.createFloatingEl(tempDiv, e.clientX, e.clientY);
+      document.body.removeChild(tempDiv);
+
+      this.createDropIndicator();
+      this.attachGlobalListeners();
+
+      // Remove these pending listeners
+      document.removeEventListener('mousemove', onMove, true);
+      document.removeEventListener('mouseup', onUp, true);
+    };
+
+    const onUp = () => {
+      this.pendingSourceDrag = null;
+      document.removeEventListener('mousemove', onMove, true);
+      document.removeEventListener('mouseup', onUp, true);
+      // Let click handler fire normally (opens preview)
+    };
+
+    document.addEventListener('mousemove', onMove, true);
+    document.addEventListener('mouseup', onUp, true);
+  }
+
+  onSourceClick(event: MouseEvent, source: any) {
+    // If we just completed a drag, don't open preview
+    if (this.sourceJustDragged) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.sourceJustDragged = false;
+      return;
+    }
+    this.openPreview(source);
+  }
+
+  private createFloatingPreview(sourceEl: HTMLElement, x: number, y: number) {
+    const clone = sourceEl.cloneNode(true) as HTMLElement;
+    clone.style.cssText = `
+      position: fixed;
+      pointer-events: none;
+      opacity: 0.8;
+      z-index: 10000;
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 4px 8px;
+      max-width: 500px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 14px;
+      left: ${x + 12}px;
+      top: ${y - 10}px;
+    `;
+    document.body.appendChild(clone);
+    this.dragState!.floatingEl = clone;
+  }
+
+  private createFloatingEl(sourceEl: HTMLElement, x: number, y: number): HTMLElement {
+    const clone = sourceEl.cloneNode(true) as HTMLElement;
+    clone.style.cssText = `
+      position: fixed;
+      pointer-events: none;
+      opacity: 0.8;
+      z-index: 10000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      left: ${x + 12}px;
+      top: ${y - 10}px;
+    `;
+    document.body.appendChild(clone);
+    return clone;
+  }
+
+  private createDropIndicator() {
+    const indicator = document.createElement('div');
+    indicator.className = 'drop-indicator-line';
+    indicator.style.cssText = `
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: #0a7a70;
+      z-index: 9999;
+      pointer-events: none;
+      display: none;
+      border-radius: 1px;
+      box-shadow: 0 0 4px rgba(10,122,112,0.4);
+    `;
+    const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
+    if (wrapper) {
+      wrapper.appendChild(indicator);
+    }
+    this.dragState!.indicatorEl = indicator;
+  }
+
+  private attachGlobalListeners() {
+    this.boundMouseMove = (e: MouseEvent) => {
+      (window as any).__globalMoveCount = ((window as any).__globalMoveCount || 0) + 1;
+      this.onGlobalMouseMove(e);
+    };
+    this.boundMouseUp = (e: MouseEvent) => this.onGlobalMouseUp(e);
+    document.addEventListener('mousemove', this.boundMouseMove, true);
+    document.addEventListener('mouseup', this.boundMouseUp, true);
+  }
+
+  private onGlobalMouseMove(event: MouseEvent) {
+    if (!this.dragState) return;
+
+    // Move floating preview
+    if (this.dragState.floatingEl) {
+      this.dragState.floatingEl.style.left = `${event.clientX + 12}px`;
+      this.dragState.floatingEl.style.top = `${event.clientY - 10}px`;
+    }
+
+    // Update drop indicator position
+    this.updateDropIndicator(event.clientX, event.clientY);
+
+    // Debug: log indicator state
+    if (this.dragState.indicatorEl) {
+      (window as any).__lastIndicatorState = {
+        display: this.dragState.indicatorEl.style.display,
+        top: this.dragState.indicatorEl.style.top,
+        dropIdx: this.dragState.dropBeforeIndex,
+        mouseX: event.clientX,
+        mouseY: event.clientY,
+      };
     }
   }
 
-  onHeadingDragEnd() {
-    this.draggedHeadingIndex = null;
+  private updateDropIndicator(clientX: number, clientY: number) {
+    if (!this.dragState?.indicatorEl) {
+      (window as any).__dropDebug = 'no indicatorEl';
+      return;
+    }
+
+    const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
+    if (!editor) {
+      (window as any).__dropDebug = 'no editor';
+      return;
+    }
+
+    const wrapperRect = this.editorContainer.nativeElement.closest('.editor-wrapper')?.getBoundingClientRect();
+    if (!wrapperRect) {
+      (window as any).__dropDebug = 'no wrapperRect';
+      return;
+    }
+
+    const children = editor.children;
+    let bestTop = -1;
+    let bestIndex = -1;
+    let minDist = Infinity;
+    (window as any).__dropDebug = `children=${children.length}, clientY=${clientY}`;
+
+    for (let i = 0; i < children.length; i++) {
+      const el = children[i] as HTMLElement;
+      const rect = el.getBoundingClientRect();
+      if (rect.height === 0) continue;
+
+      const blot = this.quill.scroll.find(el, true);
+      if (!blot) continue;
+      const idx = this.quill.getIndex(blot as any);
+
+      // Check distance to top edge of this line
+      const topDist = Math.abs(clientY - rect.top);
+      if (topDist < minDist) {
+        minDist = topDist;
+        bestTop = rect.top - wrapperRect.top;
+        bestIndex = idx;
+      }
+
+      // Check distance to bottom edge of this line (insert after)
+      const bottomDist = Math.abs(clientY - rect.bottom);
+      if (bottomDist < minDist) {
+        minDist = bottomDist;
+        bestTop = rect.bottom - wrapperRect.top;
+        const len = (blot as any).length ? (blot as any).length() : 1;
+        bestIndex = idx + len;
+      }
+    }
+
+    if (bestTop >= 0) {
+      this.dragState.indicatorEl.style.display = 'block';
+      this.dragState.indicatorEl.style.top = `${bestTop}px`;
+      this.dragState.dropBeforeIndex = bestIndex;
+    } else {
+      this.dragState.indicatorEl.style.display = 'none';
+      this.dragState.dropBeforeIndex = undefined;
+    }
   }
 
-  private handleSourceDrop(event: DragEvent) {
-    const source = this.draggedSource;
-    this.draggedSource = null;
-    this.editorDragOver = false;
-    if (!source) return;
+  private onGlobalMouseUp(event: MouseEvent) {
+    if (!this.dragState) return;
 
-    const citation = this.formatMLA(source);
+    const state = this.dragState;
+
+    if (state.type === 'line') {
+      this.completLineDrop(state, event);
+    } else if (state.type === 'source') {
+      this.completeSourceDrop(state, event);
+    }
+
+    this.cleanupDrag();
+    requestAnimationFrame(() => this.updateLineHandles());
+  }
+
+  private completLineDrop(state: DragState, event: MouseEvent) {
+    if (state.lineIndex == null || state.lineLength == null) return;
+    if (state.dropBeforeIndex == null) return;
+
+    const srcStart = state.lineIndex;
+    const srcLen = state.lineLength;
+    let targetIndex = state.dropBeforeIndex;
+
+    // Don't drop onto self
+    if (targetIndex >= srcStart && targetIndex <= srcStart + srcLen) return;
+
+    // Get the content of the line being moved
+    const delta = this.quill.getContents(srcStart, srcLen);
+
+    // Delete source first
+    this.quill.deleteText(srcStart, srcLen, 'user');
+
+    // Adjust target if it was after the deleted text
+    if (targetIndex > srcStart) {
+      targetIndex -= srcLen;
+    }
+
+    // Clamp
+    if (targetIndex < 0) targetIndex = 0;
+    const docLen = this.quill.getLength();
+    if (targetIndex > docLen) targetIndex = docLen;
+
+    // Insert at target
+    this.quill.updateContents({
+      ops: [...(targetIndex > 0 ? [{ retain: targetIndex }] : []), ...delta.ops!]
+    } as any, 'user');
+  }
+
+  private completeSourceDrop(state: DragState, event: MouseEvent) {
+    if (!state.source) return;
+
+    const citation = this.formatMLA(state.source);
+
+    // Find insert position from drop coordinates
     let insertIndex = this.quill.getLength() - 1;
-    try {
-      const range = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
-      if (range) {
-        const blot = this.quill.scroll.find(range.startContainer, true);
-        if (blot) {
-          const bi = this.quill.getIndex(blot as any);
-          const [line] = this.quill.getLine(bi);
-          if (line) insertIndex = this.quill.getIndex(line as any) + line.length();
+
+    if (state.dropBeforeIndex != null) {
+      insertIndex = state.dropBeforeIndex;
+    } else {
+      // Fallback: use caretRangeFromPoint
+      try {
+        const caretRange = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
+        if (caretRange) {
+          const blot = this.quill.scroll.find(caretRange.startContainer, true);
+          if (blot) {
+            const blotIndex = this.quill.getIndex(blot as any);
+            const [line] = this.quill.getLine(blotIndex);
+            if (line) {
+              insertIndex = this.quill.getIndex(line as any) + line.length();
+            }
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
+
+    // Insert citation as blockquote
     this.quill.insertText(insertIndex, '\n', 'user');
     this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
     this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
+    this.quill.setSelection(insertIndex + 2 + citation.length, 0);
   }
 
-  private handleHeadingDrop(event: DragEvent) {
-    const sourceIdx = this.draggedHeadingIndex;
-    this.draggedHeadingIndex = null;
-    if (sourceIdx === null) return;
-
-    const section = this.getHeadingSectionRange(sourceIdx);
-    if (!section) return;
-
-    // Find target line from drop position
-    let targetIndex = this.quill.getLength() - 1;
-    try {
-      const range = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
-      if (range) {
-        const blot = this.quill.scroll.find(range.startContainer, true);
-        if (blot) targetIndex = this.quill.getIndex(blot as any);
+  private cleanupDrag() {
+    if (this.dragState) {
+      if (this.dragState.floatingEl) {
+        this.dragState.floatingEl.remove();
       }
-    } catch {}
+      if (this.dragState.indicatorEl) {
+        this.dragState.indicatorEl.remove();
+      }
+      if (this.dragState.lineEl) {
+        this.dragState.lineEl.classList.remove('dragging-source');
+      }
+    }
+    this.dragState = null;
 
-    // Don't drop inside the section being moved
-    if (targetIndex >= section.start && targetIndex < section.start + section.length) return;
+    if (this.boundMouseMove) {
+      document.removeEventListener('mousemove', this.boundMouseMove, true);
+      this.boundMouseMove = null;
+    }
+    if (this.boundMouseUp) {
+      document.removeEventListener('mouseup', this.boundMouseUp, true);
+      this.boundMouseUp = null;
+    }
+  }
 
-    const delta = this.quill.getContents(section.start, section.length);
-    this.quill.deleteText(section.start, section.length, 'user');
-    if (targetIndex > section.start) targetIndex -= section.length;
+  // ──────────────────────────────────────
+  // Keyboard navigation
+  // ──────────────────────────────────────
+  @HostListener('keydown', ['$event'])
+  onKeyDown(event: KeyboardEvent) {
+    const lines = this.getEditorLines();
+    if (lines.length === 0) return;
+
+    // Enter or click-based selection is handled separately
+    if (event.key === 'ArrowDown' && !event.shiftKey) {
+      if (this.selectedLineIndex !== null) {
+        event.preventDefault();
+        const currentPos = this.findLinePosition(this.selectedLineIndex, lines);
+        if (currentPos < lines.length - 1) {
+          this.selectedLineIndex = lines[currentPos + 1].index;
+          this.scrollLineIntoView(lines[currentPos + 1].el);
+        }
+        this.cdr.detectChanges();
+        return;
+      }
+    }
+
+    if (event.key === 'ArrowUp' && !event.shiftKey) {
+      if (this.selectedLineIndex !== null) {
+        event.preventDefault();
+        const currentPos = this.findLinePosition(this.selectedLineIndex, lines);
+        if (currentPos > 0) {
+          this.selectedLineIndex = lines[currentPos - 1].index;
+          this.scrollLineIntoView(lines[currentPos - 1].el);
+        }
+        this.cdr.detectChanges();
+        return;
+      }
+    }
+
+    // Shift+ArrowDown: move selected line down
+    if (event.key === 'ArrowDown' && event.shiftKey && this.selectedLineIndex !== null) {
+      event.preventDefault();
+      this.moveSelectedLine('down', lines);
+      return;
+    }
+
+    // Shift+ArrowUp: move selected line up
+    if (event.key === 'ArrowUp' && event.shiftKey && this.selectedLineIndex !== null) {
+      event.preventDefault();
+      this.moveSelectedLine('up', lines);
+      return;
+    }
+
+    // Escape: deselect
+    if (event.key === 'Escape') {
+      this.selectedLineIndex = null;
+      this.cdr.detectChanges();
+    }
+  }
+
+  onLineClick(event: MouseEvent, handle: { index: number; el: HTMLElement }) {
+    // Select the line
+    this.selectedLineIndex = handle.index;
+    this.cdr.detectChanges();
+  }
+
+  private getEditorLines(): LineInfo[] {
+    const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
+    if (!editor) return [];
+
+    const lines: LineInfo[] = [];
+    const children = editor.children;
+
+    for (let i = 0; i < children.length; i++) {
+      const el = children[i] as HTMLElement;
+      const blot = this.quill.scroll.find(el, true);
+      if (!blot) continue;
+      const index = this.quill.getIndex(blot as any);
+      const len = (blot as any).length ? (blot as any).length() : 1;
+      lines.push({ el, index, length: len, rect: el.getBoundingClientRect() });
+    }
+    return lines;
+  }
+
+  private findLinePosition(quillIndex: number, lines: LineInfo[]): number {
+    // Find the line at or nearest to this quill index
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].index === quillIndex) return i;
+    }
+    // Fallback: find closest
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < lines.length; i++) {
+      const dist = Math.abs(lines[i].index - quillIndex);
+      if (dist < bestDist) { bestDist = dist; best = i; }
+    }
+    return best;
+  }
+
+  private moveSelectedLine(direction: 'up' | 'down', lines: LineInfo[]) {
+    if (this.selectedLineIndex === null) return;
+
+    const pos = this.findLinePosition(this.selectedLineIndex, lines);
+    if (direction === 'up' && pos <= 0) return;
+    if (direction === 'down' && pos >= lines.length - 1) return;
+
+    const srcLine = lines[pos];
+    const srcStart = srcLine.index;
+    const srcLen = srcLine.length;
+
+    // Get target position
+    const targetLine = direction === 'up' ? lines[pos - 1] : lines[pos + 1];
+
+    // Get content of the line being moved
+    const delta = this.quill.getContents(srcStart, srcLen);
+
+    // Delete source
+    this.quill.deleteText(srcStart, srcLen, 'user');
+
+    // Calculate new target index
+    let targetIndex: number;
+    if (direction === 'up') {
+      targetIndex = targetLine.index;
+    } else {
+      // After deletion, target line shifted
+      targetIndex = targetLine.index - srcLen + targetLine.length;
+    }
+
     if (targetIndex < 0) targetIndex = 0;
+
+    // Insert
     this.quill.updateContents({
       ops: [...(targetIndex > 0 ? [{ retain: targetIndex }] : []), ...delta.ops!]
     } as any, 'user');
 
-    requestAnimationFrame(() => this.updateHeadingHandles());
-  }
+    // Update selected index to new position
+    this.selectedLineIndex = targetIndex;
+    this.cdr.detectChanges();
 
-  getHeadingSectionRange(startIndex: number): { start: number; length: number } | null {
-    // Verify the start line is a heading
-    const [startLine] = this.quill.getLine(startIndex);
-    if (!startLine) return null;
-    const startLineIdx = this.quill.getIndex(startLine as any);
-    const startFmt = this.quill.getFormat(startLineIdx, (startLine as any).length());
-    if (!startFmt['header']) return null;
-    const sectionLevel = startFmt['header'] as number;
-
-    // Walk forward line by line to find the end of this section
-    let pos = startLineIdx + (startLine as any).length();
-    const docLen = this.quill.getLength();
-
-    while (pos < docLen) {
-      const [nextLine] = this.quill.getLine(pos);
-      if (!nextLine) break;
-      const nextIdx = this.quill.getIndex(nextLine as any);
-      const nextLen = (nextLine as any).length();
-      const nextFmt = this.quill.getFormat(nextIdx, nextLen);
-
-      if (nextFmt['header'] && (nextFmt['header'] as number) <= sectionLevel) {
-        return { start: startLineIdx, length: nextIdx - startLineIdx };
-      }
-      pos = nextIdx + nextLen;
-    }
-
-    return { start: startLineIdx, length: docLen - startLineIdx };
-  }
-
-  updateHeadingHandles() {
-    const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
-    if (!editor) return;
-
-    const handles: typeof this.headingHandles = [];
-    const headings = editor.querySelectorAll('h1, h2, h3');
-    const wrapperRect = this.editorContainer.nativeElement.closest('.editor-wrapper')?.getBoundingClientRect();
-    if (!wrapperRect) return;
-
-    headings.forEach((el: Element) => {
-      const rect = (el as HTMLElement).getBoundingClientRect();
-      const blot = this.quill.scroll.find(el, true);
-      if (blot) {
-        handles.push({
-          el: el as HTMLElement,
-          top: rect.top - wrapperRect.top,
-          index: this.quill.getIndex(blot as any),
-        });
+    requestAnimationFrame(() => {
+      this.updateLineHandles();
+      // Scroll into view
+      const newLines = this.getEditorLines();
+      const newPos = this.findLinePosition(this.selectedLineIndex!, newLines);
+      if (newLines[newPos]) {
+        this.scrollLineIntoView(newLines[newPos].el);
       }
     });
-    this.headingHandles = handles;
-    this.cdr.detectChanges();
   }
 
-  // --- Export to Google Docs ---
+  private scrollLineIntoView(el: HTMLElement) {
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  isLineSelected(index: number): boolean {
+    return this.selectedLineIndex === index;
+  }
+
+  // ──────────────────────────────────────
+  // Export to Google Docs (unchanged)
+  // ──────────────────────────────────────
   exportToGoogleDoc() {
     const htmlContent = this.quill.root.innerHTML;
     navigator.clipboard.write([
@@ -376,7 +774,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   trackByIndex(index: number) { return index; }
 
-  // --- Demo Content ---
+  // ──────────────────────────────────────
+  // Demo Content (unchanged)
+  // ──────────────────────────────────────
   private loadDemoContent() {
     const delta = {
       ops: [
