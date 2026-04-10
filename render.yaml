@@ -3,7 +3,7 @@ services:
     name: scrible-outliner
     runtime: static
     repo: https://github.com/bwthomas/outliner
-    buildCommand: npm install --legacy-peer-deps && npm run build -- --configuration production
+    buildCommand: npm install && npm run build -- --configuration production
     staticPublishPath: dist/outliner/browser
     envVars:
       - key: NODE_VERSION
