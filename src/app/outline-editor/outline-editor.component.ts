@@ -895,16 +895,41 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       pos = lineIdx + lineLen;
     }
 
-    // 4. Consolidate: merge adjacent same-level lists with no intervening heading
-    // (handled by rule 3 above — each item adopts the type of the one above it,
-    //  which cascade-converts the entire run to match the topmost item)
+    // 4. Remove any blank lines between end of list/blockquote and next heading
+    //    Walk again to catch gaps the first pass might have left
+    len = q.getLength();
+    pos = 0;
+    while (pos < len) {
+      const [line] = q.getLine(pos);
+      if (!line) break;
+      const lineIdx = q.getIndex(line as any);
+      const lineLen = (line as any).length();
+      const fmt = q.getFormat(lineIdx, lineLen);
+      const text = q.getText(lineIdx, lineLen);
+      const isEmpty = text.replace(/[\n\s]/g, '') === '';
+
+      // If this is a blank unformatted line, check if it sits between content and a heading
+      if (isEmpty && !fmt['header'] && !fmt['list'] && !fmt['blockquote']) {
+        // Check what comes next
+        const nextPos = lineIdx + lineLen;
+        if (nextPos < len) {
+          const nextFmt = q.getFormat(nextPos, 1);
+          if (nextFmt['header']) {
+            q.deleteText(lineIdx, lineLen, 'silent');
+            len = q.getLength();
+            continue;
+          }
+        }
+      }
+      pos = lineIdx + lineLen;
+    }
 
     // 5. Remove trailing empty lines beyond one
-    const totalLen = q.getLength();
-    if (totalLen > 2) {
-      const lastText = q.getText(totalLen - 2, 2);
+    len = q.getLength();
+    if (len > 2) {
+      const lastText = q.getText(len - 2, 2);
       if (lastText === '\n\n') {
-        q.deleteText(totalLen - 1, 1, 'silent');
+        q.deleteText(len - 1, 1, 'silent');
       }
     }
   }
