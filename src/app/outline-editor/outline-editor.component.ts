@@ -895,8 +895,8 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       pos = lineIdx + lineLen;
     }
 
-    // 4. Remove any blank lines between end of list/blockquote and next heading
-    //    Walk again to catch gaps the first pass might have left
+    // 4. Second pass: remove ALL remaining empty lines anywhere in the document
+    //    (catches gaps left by rule 1 due to formatting changes in rules 2-3)
     len = q.getLength();
     pos = 0;
     while (pos < len) {
@@ -904,22 +904,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       if (!line) break;
       const lineIdx = q.getIndex(line as any);
       const lineLen = (line as any).length();
-      const fmt = q.getFormat(lineIdx, lineLen);
       const text = q.getText(lineIdx, lineLen);
+      const fmt = q.getFormat(lineIdx, lineLen);
       const isEmpty = text.replace(/[\n\s]/g, '') === '';
 
-      // If this is a blank unformatted line, check if it sits between content and a heading
-      if (isEmpty && !fmt['header'] && !fmt['list'] && !fmt['blockquote']) {
-        // Check what comes next
-        const nextPos = lineIdx + lineLen;
-        if (nextPos < len) {
-          const nextFmt = q.getFormat(nextPos, 1);
-          if (nextFmt['header']) {
-            q.deleteText(lineIdx, lineLen, 'silent');
-            len = q.getLength();
-            continue;
-          }
-        }
+      if (isEmpty && !fmt['header'] && lineIdx + lineLen < len) {
+        q.deleteText(lineIdx, lineLen, 'silent');
+        len = q.getLength();
+        continue;
       }
       pos = lineIdx + lineLen;
     }
