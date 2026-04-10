@@ -1,66 +1,54 @@
 <div class="outline-shell" [class.preview-open]="showPreview">
-  <!-- Main Editor Panel -->
   <div class="editor-panel">
     <header class="toolbar">
       <div class="toolbar-left">
-        <h1 class="app-title">Outline</h1>
+        <img class="logo" src="https://www.scrible.com/assets/scrible-logo.png" alt="scrible" height="28"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='inline'">
+        <h1 class="app-title" style="display:none">Outline</h1>
       </div>
       <div class="toolbar-right">
         <button class="btn btn-ghost" (click)="showPreview = !showPreview" [class.active]="showPreview"
                 aria-label="Toggle source panel">
-          <span class="material-icons" aria-hidden="true">web</span>
-          Sources
+          <span class="material-icons" aria-hidden="true">web</span> Sources
         </button>
         <button class="btn btn-primary" (click)="exportToGoogleDoc()" aria-label="Export to Google Docs">
-          <span class="material-icons" aria-hidden="true">open_in_new</span>
-          Google Docs
+          <span class="material-icons" aria-hidden="true">open_in_new</span> Google Docs
         </button>
       </div>
     </header>
-
     <div class="editor-scroll" tabindex="0" role="region" aria-label="Outline content">
       <div class="editor-wrapper">
-
-        <!-- Line drag handles for ALL block-level lines -->
         @for (h of lineHandles; track h.index) {
           <div class="line-drag-handle"
                [style.top.px]="h.top"
                [class.line-selected]="isLineSelected(h.index)"
                (mousedown)="onLineHandleMouseDown($event, h)"
                (click)="onLineClick($event, h)"
-               title="Drag to move this line"
-               role="button"
-               aria-label="Drag to reorder line">
+               title="Drag to move" role="button" aria-label="Drag to reorder">
             <span class="material-icons" aria-hidden="true">drag_indicator</span>
           </div>
         }
-
         <div #editorContainer class="quill-host" role="textbox" aria-label="Outline editor" aria-multiline="true"></div>
       </div>
     </div>
   </div>
 
-  <!-- Source Preview Panel -->
   @if (showPreview) {
     <aside class="preview-panel" aria-label="Source panel">
       <div class="preview-header">
-        <span class="preview-title">{{ previewTitle }}</span>
-        <button class="btn-icon" (click)="closePreview()" aria-label="Close source panel">
-          <span class="material-icons" aria-hidden="true">close</span>
-        </button>
+        <span class="preview-title">Sources</span>
+        <button class="btn-icon" (click)="closePreview()" aria-label="Close"><span class="material-icons" aria-hidden="true">close</span></button>
       </div>
 
-      @if (!previewUrl) {
-        <!-- Source list -->
+      @if (!selectedSource) {
         <div class="source-list">
-          <p class="source-hint">Drag a source onto the outline, or click <strong>Cite</strong> to insert an MLA citation at the cursor.</p>
+          <p class="source-hint">Drag a source onto the outline, or click <strong>Cite</strong> to insert. Click a source for details.</p>
           @for (source of sampleSources; track source.url) {
             <div class="source-card">
               <div class="source-card-main"
                    (mousedown)="onSourceMouseDown($event, source)"
                    (click)="onSourceClick($event, source)"
-                   role="button"
-                   [attr.aria-label]="'Source: ' + source.title">
+                   role="button" [attr.aria-label]="'Source: ' + source.title">
                 <img class="source-favicon"
                      [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
                      alt="" width="24" height="24" aria-hidden="true">
@@ -70,42 +58,29 @@
                 </div>
               </div>
               <button class="cite-btn" (click)="insertCitation(source); $event.stopPropagation()"
-                      [attr.aria-label]="'Insert citation for ' + source.title">
-                Cite
-              </button>
+                      [attr.aria-label]="'Insert citation for ' + source.title">Cite</button>
             </div>
           }
         </div>
       } @else {
-        <!-- Preview view -->
-        <div class="preview-nav">
-          <button class="btn btn-sm" (click)="goBackToSources()" aria-label="Back to sources">&larr; Sources</button>
-          <a class="preview-link" [href]="previewUrl" target="_blank" rel="noopener noreferrer">
-            Open in new tab
-            <span class="material-icons" aria-hidden="true" style="font-size:14px;vertical-align:middle">open_in_new</span>
-          </a>
+        <div class="source-detail">
+          <button class="btn btn-sm" (click)="goBackToSources()" aria-label="Back to sources">&larr; All Sources</button>
+          <img class="source-detail-thumb"
+               [src]="'https://api.microlink.io/?url=' + selectedSource.url + '&screenshot=true&meta=false&embed=screenshot.url'"
+               [alt]="selectedSource.title"
+               onerror="this.src='https://www.google.com/s2/favicons?domain=' + this.closest('.source-detail').querySelector('.source-detail-title a')?.href + '&sz=128'">
+          <h3 class="source-detail-title">
+            <a [href]="selectedSource.url" target="_blank" rel="noopener noreferrer">
+              {{ selectedSource.title }}
+              <span class="material-icons" aria-hidden="true" style="font-size:14px;vertical-align:middle">open_in_new</span>
+            </a>
+          </h3>
+          <div class="source-detail-meta">{{ selectedSource.author }} &middot; {{ selectedSource.date }}</div>
+          <p class="source-detail-summary">{{ selectedSource.summary }}</p>
+          <button class="btn btn-primary btn-full" (click)="insertCitation(selectedSource)">
+            <span class="material-icons" aria-hidden="true">format_quote</span> Insert Citation
+          </button>
         </div>
-
-        @if (previewLoading) {
-          <div class="preview-loading" role="status">
-            <span class="spinner" aria-hidden="true"></span>
-            Loading preview&hellip;
-          </div>
-        }
-
-        @if (previewHtml) {
-          <iframe [srcdoc]="previewHtml"
-                  class="preview-frame"
-                  sandbox="allow-scripts allow-same-origin"
-                  referrerpolicy="no-referrer"
-                  [title]="'Preview of ' + previewTitle"></iframe>
-        } @else if (!previewLoading) {
-          <iframe [src]="previewUrl | safeUrl"
-                  class="preview-frame"
-                  sandbox="allow-scripts allow-same-origin"
-                  referrerpolicy="no-referrer"
-                  [title]="'Preview of ' + previewTitle"></iframe>
-        }
       }
     </aside>
   }

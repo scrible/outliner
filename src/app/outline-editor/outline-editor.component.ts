@@ -40,17 +40,17 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   @ViewChild('editorContainer') editorContainer!: ElementRef<HTMLDivElement>;
 
   quill!: Quill;
-  previewUrl = '';
-  previewHtml = '';
-  previewTitle = 'Source Preview';
   showPreview = false;
-  previewLoading = false;
 
   sampleSources = [
-    { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024' },
-    { title: 'Mars 2020 Perseverance Rover', url: 'https://science.nasa.gov/mission/mars-2020-perseverance/', author: 'NASA Science', date: '2024' },
-    { title: 'Water on Mars — Wikipedia', url: 'https://en.wikipedia.org/wiki/Water_on_Mars', author: 'Wikipedia contributors', date: '2024' },
-    { title: 'SpaceX Starship', url: 'https://www.spacex.com/vehicles/starship/', author: 'SpaceX', date: '2024' },
+    { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024',
+      summary: 'NASA\'s hub for Mars missions including rovers, orbiters, and future human exploration plans. Covers Curiosity, Perseverance, and upcoming sample-return missions.' },
+    { title: 'Mars 2020 Perseverance Rover', url: 'https://science.nasa.gov/mission/mars-2020-perseverance/', author: 'NASA Science', date: '2024',
+      summary: 'Details on the Perseverance rover mission, designed to seek signs of ancient life and collect rock samples for future return to Earth via the Mars Sample Return campaign.' },
+    { title: 'Water on Mars — Wikipedia', url: 'https://en.wikipedia.org/wiki/Water_on_Mars', author: 'Wikipedia contributors', date: '2024',
+      summary: 'Comprehensive overview of evidence for water on Mars, including polar ice caps, seasonal flows, subsurface glaciers, and implications for past habitability.' },
+    { title: 'SpaceX Starship', url: 'https://www.spacex.com/vehicles/starship/', author: 'SpaceX', date: '2024',
+      summary: 'SpaceX\'s fully reusable heavy-lift launch vehicle designed to carry crew and cargo to the Moon, Mars, and beyond. Key to reducing per-kg launch costs for interplanetary missions.' },
   ];
 
   // Line handles for ALL block-level lines
@@ -117,55 +117,21 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   // ──────────────────────────────────────
-  // Source Preview (unchanged)
+  // Source Detail (thumbnail + summary)
   // ──────────────────────────────────────
-  openPreview(source: { title: string; url: string }) {
-    this.previewUrl = source.url;
-    this.previewTitle = source.title;
-    this.showPreview = true;
-    this.previewLoading = true;
-    this.previewHtml = '';
+  selectedSource: any = null;
 
-    this.fetchWithProxy(source.url)
-      .then(html => {
-        const base = `<base href="${source.url}"><style>body{font-family:system-ui,sans-serif;}</style>`;
-        this.zone.run(() => {
-          this.previewHtml = html.replace(/<head[^>]*>/i, `$&${base}`);
-          this.previewLoading = false;
-        });
-      })
-      .catch(() => {
-        this.zone.run(() => {
-          this.previewHtml = '';
-          this.previewLoading = false;
-        });
-      });
-  }
-
-  private async fetchWithProxy(url: string): Promise<string> {
-    const proxies = [
-      `https://corsproxy.io/?${encodeURIComponent(url)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    ];
-    for (const proxyUrl of proxies) {
-      try {
-        const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-        if (r.ok) return await r.text();
-      } catch {}
-    }
-    throw new Error('All proxies failed');
+  openSourceDetail(source: any) {
+    this.selectedSource = source;
   }
 
   closePreview() {
     this.showPreview = false;
-    this.previewUrl = '';
-    this.previewHtml = '';
+    this.selectedSource = null;
   }
 
   goBackToSources() {
-    this.previewUrl = '';
-    this.previewHtml = '';
-    this.previewTitle = 'Source Preview';
+    this.selectedSource = null;
   }
 
   // ──────────────────────────────────────
@@ -199,6 +165,30 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // ──────────────────────────────────────
   // Line handles — for ALL block-level lines
   // ──────────────────────────────────────
+  getHeadingSectionRange(startIndex: number): { start: number; length: number } | null {
+    const [startLine] = this.quill.getLine(startIndex);
+    if (!startLine) return null;
+    const startLineIdx = this.quill.getIndex(startLine as any);
+    const startFmt = this.quill.getFormat(startLineIdx, (startLine as any).length());
+    if (!startFmt['header']) return null;
+    const sectionLevel = startFmt['header'] as number;
+
+    let pos = startLineIdx + (startLine as any).length();
+    const docLen = this.quill.getLength();
+    while (pos < docLen) {
+      const [nextLine] = this.quill.getLine(pos);
+      if (!nextLine) break;
+      const nextIdx = this.quill.getIndex(nextLine as any);
+      const nextLen = (nextLine as any).length();
+      const nextFmt = this.quill.getFormat(nextIdx, nextLen);
+      if (nextFmt['header'] && (nextFmt['header'] as number) <= sectionLevel) {
+        return { start: startLineIdx, length: nextIdx - startLineIdx };
+      }
+      pos = nextIdx + nextLen;
+    }
+    return { start: startLineIdx, length: docLen - startLineIdx };
+  }
+
   updateLineHandles() {
     const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
     if (!editor) return;
@@ -244,11 +234,23 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     event.stopPropagation();
 
     const rect = handle.el.getBoundingClientRect();
+    const tag = handle.el.tagName;
+    let dragIndex = handle.index;
+    let dragLength = handle.length;
+
+    // For headings: grab the entire section (heading + content until next same-level heading)
+    if (tag === 'H1' || tag === 'H2' || tag === 'H3') {
+      const section = this.getHeadingSectionRange(handle.index);
+      if (section) {
+        dragIndex = section.start;
+        dragLength = section.length;
+      }
+    }
 
     this.dragState = {
       type: 'line',
-      lineIndex: handle.index,
-      lineLength: handle.length,
+      lineIndex: dragIndex,
+      lineLength: dragLength,
       lineEl: handle.el,
       offsetY: event.clientY - rect.top,
     };
@@ -334,7 +336,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       this.sourceJustDragged = false;
       return;
     }
-    this.openPreview(source);
+    this.openSourceDetail(source);
   }
 
   private createFloatingPreview(sourceEl: HTMLElement, x: number, y: number) {
