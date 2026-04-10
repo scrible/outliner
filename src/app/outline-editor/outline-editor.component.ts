@@ -161,6 +161,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       }
     });
 
+    // Replace header dropdown with H1/H2/H3 toggle buttons
+    this.replaceHeaderDropdown();
+
     // Override list toolbar handler: clicking same list type should do nothing (not remove list)
     const toolbar = this.quill.getModule('toolbar') as any;
     if (toolbar) {
@@ -174,6 +177,13 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         this.quill.format('list', value);
       });
     }
+
+    // Track last focused position for citation insert
+    this.quill.on('selection-change', (range: any) => {
+      if (range) this.lastFocusedIndex = range.index;
+      // Update header button active state
+      this.updateHeaderButtons();
+    });
 
     // Track mouse position for single hover handle
     const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
@@ -191,24 +201,74 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.loadDemoContent();
     setTimeout(() => this.updateLineHandles(), 300);
 
-    // Track last focused position for citation insert
-    this.quill.on('selection-change', (range: any) => {
-      if (range) this.lastFocusedIndex = range.index;
-    });
+    // (selection-change handled above)
 
     let formatTimer: any = null;
     this.quill.on('text-change', (_delta: any, _oldDelta: any, source: string) => {
       requestAnimationFrame(() => this.updateLineHandles());
-      // Run formatter on user changes (debounced to avoid fighting with typing)
+      // Run formatter on user changes — longer debounce so new empty lines survive until user types
       if (source === 'user') {
         clearTimeout(formatTimer);
-        formatTimer = setTimeout(() => this.formatOutline(), 300);
+        formatTimer = setTimeout(() => this.formatOutline(), 3000);
       }
     });
   }
 
   ngOnDestroy() {
     this.cleanupDrag();
+  }
+
+  // ──────────────────────────────────────
+  // Replace header dropdown with H1/H2/H3 toggle buttons
+  // ──────────────────────────────────────
+  private replaceHeaderDropdown() {
+    const toolbar = this.editorContainer.nativeElement.closest('.quill-host')
+      ?.querySelector('.ql-toolbar') ||
+      document.querySelector('.ql-toolbar');
+    if (!toolbar) return;
+
+    const headerPicker = toolbar.querySelector('.ql-header.ql-picker');
+    if (!headerPicker) return;
+
+    // Create button group
+    const group = document.createElement('span');
+    group.className = 'ql-formats ql-header-btns';
+
+    for (const level of [1, 2, 3]) {
+      const btn = document.createElement('button');
+      btn.className = 'ql-header-toggle';
+      btn.setAttribute('data-value', String(level));
+      btn.textContent = `H${level}`;
+      btn.addEventListener('click', () => {
+        const sel = this.quill.getSelection();
+        if (!sel) return;
+        const fmt = this.quill.getFormat(sel.index, sel.length || 1);
+        const current = (fmt as any)['header'];
+        if (current === level) {
+          // Already this level — remove header (back to normal)
+          this.quill.format('header', false);
+        } else {
+          this.quill.format('header', level);
+        }
+        this.updateHeaderButtons();
+      });
+      group.appendChild(btn);
+    }
+
+    // Replace the picker
+    headerPicker.parentElement?.replaceChild(group, headerPicker);
+  }
+
+  private updateHeaderButtons() {
+    const btns = document.querySelectorAll('.ql-header-toggle');
+    const sel = this.quill.getSelection();
+    if (!sel) return;
+    const fmt = this.quill.getFormat(sel.index, sel.length || 1);
+    const current = (fmt as any)['header'] || 0;
+    btns.forEach(btn => {
+      const val = parseInt(btn.getAttribute('data-value') || '0');
+      btn.classList.toggle('active', val === current);
+    });
   }
 
   // ──────────────────────────────────────
@@ -237,24 +297,35 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   copyLineToClipboard(handle: { el: HTMLElement; index: number; length: number }) {
     const tag = handle.el.tagName;
-    let copyIndex = handle.index;
-    let copyLength = handle.length;
-    // For headings, copy the whole section
+    let sectionEls: HTMLElement[];
+
     if (/^H[123]$/.test(tag)) {
       const range = this.getHeadingSectionRange(handle.index);
-      if (range) { copyIndex = range.start; copyLength = range.length; }
+      sectionEls = range ? this.getElementsInRange(range.start, range.length) : [handle.el];
+    } else {
+      sectionEls = [handle.el];
     }
-    const html = this.quill.root.innerHTML; // fallback
-    const text = this.quill.getText(copyIndex, copyLength);
-    const delta = this.quill.getContents(copyIndex, copyLength);
-    // Create a temp Quill to render the delta as HTML
-    const tempDiv = document.createElement('div');
-    tempDiv.style.display = 'none';
-    document.body.appendChild(tempDiv);
-    const tempQuill = new Quill(tempDiv, { readOnly: true });
-    tempQuill.setContents(delta);
-    const richHtml = tempQuill.root.innerHTML;
-    document.body.removeChild(tempDiv);
+
+    // Clone the actual DOM elements to preserve proper list nesting
+    const container = document.createElement('div');
+    for (const el of sectionEls) {
+      // For LI elements, wrap in proper OL/UL from the original parent
+      if (el.tagName === 'LI' && el.parentElement) {
+        const listTag = el.parentElement.tagName; // OL or UL
+        // Find or create a matching list wrapper in our container
+        let lastChild = container.lastElementChild;
+        if (!lastChild || lastChild.tagName !== listTag) {
+          lastChild = document.createElement(listTag);
+          container.appendChild(lastChild);
+        }
+        lastChild.appendChild(el.cloneNode(true));
+      } else {
+        container.appendChild(el.cloneNode(true));
+      }
+    }
+
+    const richHtml = container.innerHTML;
+    const text = sectionEls.map(el => el.textContent).join('\n');
 
     navigator.clipboard.write([
       new ClipboardItem({
@@ -262,8 +333,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         'text/plain': new Blob([text], { type: 'text/plain' }),
       })
     ]).catch(() => {});
-    this.exportToastVisible = true;
-    this.cdr.detectChanges();
+    this.showToast();
   }
 
   insertCitation(source: any) {
@@ -1047,11 +1117,21 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     ]).catch(() => {});
 
     // Show persistent toast (user dismisses manually)
-    this.exportToastVisible = true;
-    this.cdr.detectChanges();
+    this.showToast();
   }
 
   exportToastVisible = false;
+  private toastTimer: any = null;
+
+  showToast() {
+    this.exportToastVisible = true;
+    this.cdr.detectChanges();
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => {
+      this.exportToastVisible = false;
+      this.cdr.detectChanges();
+    }, 8000);
+  }
 
   // ──────────────────────────────────────
   // Keyboard navigation
