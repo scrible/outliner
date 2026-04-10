@@ -92,10 +92,22 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         keyboard: {
           bindings: {
             // Override ALL tab behavior — always indent/outdent, never insert whitespace
-            'tab': { key: 'Tab', shiftKey: false, handler: () => { this.quill.format('indent', '+1'); return false; } },
-            'shift-tab': { key: 'Tab', shiftKey: true, handler: () => { this.quill.format('indent', '-1'); return false; } },
-            // Also suppress default tab in lists (Quill binds it separately)
-            'list autofill': { key: 'Tab', collapsed: true, format: ['list'], handler: () => { this.quill.format('indent', '+1'); return false; } },
+            'tab': { key: 'Tab', shiftKey: false, handler: () => {
+              const sel = this.quill.getSelection();
+              if (sel) this.quill.formatLine(sel.index, 1, 'indent', '+1');
+              return false;
+            }},
+            'shift-tab': { key: 'Tab', shiftKey: true, handler: () => {
+              const sel = this.quill.getSelection();
+              if (sel) this.quill.formatLine(sel.index, 1, 'indent', '-1');
+              return false;
+            }},
+            // Suppress default tab in lists
+            'list autofill': { key: 'Tab', collapsed: true, format: ['list'], handler: () => {
+              const sel = this.quill.getSelection();
+              if (sel) this.quill.formatLine(sel.index, 1, 'indent', '+1');
+              return false;
+            }},
           }
         },
         history: { delay: 500, maxStack: 100, userOnly: true },
@@ -350,6 +362,10 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       offsetY: event.clientY - rect.top,
     };
 
+    // Prevent text selection during drag
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+
     // Find all DOM elements in the drag range and dim them
     const sectionEls = this.getElementsInRange(dragIndex, dragLength);
     sectionEls.forEach(el => el.classList.add('dragging-source'));
@@ -367,35 +383,28 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // Mouse-based source drag
   // ──────────────────────────────────────
   onSourceMouseDown(event: MouseEvent, source: any) {
-    // Only trigger on left button
     if (event.button !== 0) return;
+    event.preventDefault(); // Prevent text selection
 
-    // Set up pending drag — will activate after mouse moves beyond threshold
-    this.pendingSourceDrag = {
-      source,
-      startX: event.clientX,
-      startY: event.clientY,
-    };
+    this.pendingSourceDrag = { source, startX: event.clientX, startY: event.clientY };
     this.sourceJustDragged = false;
 
     const onMove = (e: MouseEvent) => {
+      e.preventDefault(); // Prevent text selection during drag
       if (!this.pendingSourceDrag) return;
       const dx = e.clientX - this.pendingSourceDrag.startX;
       const dy = e.clientY - this.pendingSourceDrag.startY;
-      if (Math.sqrt(dx * dx + dy * dy) < 5) return; // threshold
+      if (Math.sqrt(dx * dx + dy * dy) < 5) return;
 
-      // Activate drag
       const src = this.pendingSourceDrag.source;
       this.pendingSourceDrag = null;
       this.sourceJustDragged = true;
-      (window as any).__sourceDragActivated = true;
-      (window as any).__globalMoveCount = 0; // reset counter
 
-      this.dragState = {
-        type: 'source',
-        source: src,
-        offsetY: 0,
-      };
+      // Prevent text selection globally during drag
+      document.body.style.userSelect = 'none';
+      document.body.style.webkitUserSelect = 'none';
+
+      this.dragState = { type: 'source', source: src, offsetY: 0 };
 
       const tempDiv = document.createElement('blockquote');
       tempDiv.textContent = this.formatMLA(src);
@@ -404,7 +413,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       this.createDropIndicator();
       this.attachGlobalListeners();
 
-      // Remove these pending listeners
       document.removeEventListener('mousemove', onMove, true);
       document.removeEventListener('mouseup', onUp, true);
     };
@@ -413,7 +421,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       this.pendingSourceDrag = null;
       document.removeEventListener('mousemove', onMove, true);
       document.removeEventListener('mouseup', onUp, true);
-      // Let click handler fire normally (opens preview)
     };
 
     document.addEventListener('mousemove', onMove, true);
@@ -496,7 +503,16 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     for (const el of els) {
       const clone = el.cloneNode(true) as HTMLElement;
       clone.classList.remove('dragging-source');
+      clone.classList.remove('hover-highlight');
       clone.style.margin = '0';
+      // Force headings in the preview to match body text style
+      if (/^H[123]$/.test(clone.tagName)) {
+        clone.style.fontSize = '14px';
+        clone.style.fontWeight = 'bold';
+        clone.style.color = '#333';
+        clone.style.borderBottom = 'none';
+        clone.style.paddingBottom = '0';
+      }
       container.appendChild(clone);
     }
     document.body.appendChild(container);
@@ -542,6 +558,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   private onGlobalMouseMove(event: MouseEvent) {
     if (!this.dragState) return;
+    event.preventDefault(); // Prevent text selection during drag
 
     // Move floating preview
     if (this.dragState.floatingEl) {
@@ -625,8 +642,8 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       });
       if (validBlocks.length === 0) validBlocks = blocks.filter(b => /^H[123]$/.test(b.el.tagName));
     } else if (isListItemDrag) {
-      // List items can only drop among other list items (existing lists)
-      validBlocks = blocks.filter(b => b.el.tagName === 'LI');
+      // List items drop among other list items, blockquotes, or after headings
+      validBlocks = blocks.filter(b => b.el.tagName === 'LI' || b.el.tagName === 'BLOCKQUOTE' || /^H[123]$/.test(b.el.tagName));
     }
 
     let bestBlock: typeof blocks[0] | null = null;
@@ -801,13 +818,17 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       if (this.dragState.indicatorEl) {
         this.dragState.indicatorEl.remove();
       }
-      // Un-dim all dragged elements
       document.querySelectorAll('.dragging-source').forEach(el => el.classList.remove('dragging-source'));
     }
     if (this.displacedEl) {
       this.displacedEl.style.marginTop = '';
       this.displacedEl = null;
     }
+    // Restore text selection
+    document.body.style.userSelect = '';
+    document.body.style.webkitUserSelect = '';
+    // Clear any accidental selection
+    window.getSelection()?.removeAllRanges();
     this.dragState = null;
 
     if (this.boundMouseMove) {
@@ -825,7 +846,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // ──────────────────────────────────────
   private formatOutline() {
     const q = this.quill;
-    const len = q.getLength();
+    let len = q.getLength();
     let pos = 0;
 
     while (pos < len) {
@@ -836,12 +857,13 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       const text = q.getText(lineIdx, lineLen);
       const fmt = q.getFormat(lineIdx, lineLen);
 
-      // 1. Remove empty lines — including empty list items and empty blockquotes
-      //    (but not headings, which serve as section markers even when empty)
-      const textContent = text.replace(/\n/g, '').trim();
-      if (textContent === '' && !fmt['header'] && lineIdx + lineLen < len) {
+      // 1. Remove empty/whitespace-only lines (including empty list items, blockquotes, paragraphs)
+      //    Keep headings (section markers) and the final newline
+      const textContent = text.replace(/[\n\s]/g, '');
+      if (textContent === '' && !fmt['header'] && pos + lineLen < q.getLength()) {
         q.deleteText(lineIdx, lineLen, 'silent');
-        continue; // re-check same position
+        len = q.getLength(); // recalculate length
+        continue;
       }
 
       // 2. Enforce single-step indentation (no jumping from indent 0 to indent 2+)
