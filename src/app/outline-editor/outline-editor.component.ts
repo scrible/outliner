@@ -255,11 +255,12 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       offsetY: event.clientY - rect.top,
     };
 
-    // Reduce opacity of original
-    handle.el.classList.add('dragging-source');
+    // Find all DOM elements in the drag range and dim them
+    const sectionEls = this.getElementsInRange(dragIndex, dragLength);
+    sectionEls.forEach(el => el.classList.add('dragging-source'));
 
-    // Create floating preview
-    this.createFloatingPreview(handle.el, event.clientX, event.clientY);
+    // Create floating preview from all section elements
+    this.createFloatingPreview(sectionEls, event.clientX, event.clientY);
 
     // Create drop indicator
     this.createDropIndicator();
@@ -339,41 +340,67 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.openSourceDetail(source);
   }
 
-  private createFloatingPreview(sourceEl: HTMLElement, x: number, y: number) {
-    const clone = sourceEl.cloneNode(true) as HTMLElement;
-    clone.style.cssText = `
+  private getElementsInRange(startIndex: number, length: number): HTMLElement[] {
+    const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
+    if (!editor) return [];
+    const endIndex = startIndex + length;
+    const result: HTMLElement[] = [];
+
+    const checkEl = (el: HTMLElement) => {
+      const blot = this.quill.scroll.find(el, true);
+      if (!blot) return;
+      try {
+        const idx = this.quill.getIndex(blot as any);
+        const len = (blot as any).length ? (blot as any).length() : 1;
+        if (idx >= startIndex && idx + len <= endIndex) {
+          result.push(el);
+        }
+      } catch {}
+    };
+
+    for (let i = 0; i < editor.children.length; i++) {
+      const el = editor.children[i] as HTMLElement;
+      const tag = el.tagName;
+      if (tag === 'OL' || tag === 'UL') {
+        for (let j = 0; j < el.children.length; j++) checkEl(el.children[j] as HTMLElement);
+      } else {
+        checkEl(el);
+      }
+    }
+    return result;
+  }
+
+  private createFloatingPreview(sourceEls: HTMLElement | HTMLElement[], x: number, y: number) {
+    const container = document.createElement('div');
+    container.style.cssText = `
       position: fixed;
       pointer-events: none;
-      opacity: 0.8;
+      opacity: 0.85;
       z-index: 10000;
       background: white;
-      border: 1px solid #e5e7eb;
-      border-radius: 6px;
-      padding: 4px 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 6px 10px;
       max-width: 500px;
+      max-height: 300px;
+      overflow: hidden;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      font-family: 'Inter', system-ui, sans-serif;
+      font-family: Arial, Helvetica, sans-serif;
       font-size: 14px;
       left: ${x + 12}px;
       top: ${y - 10}px;
     `;
-    document.body.appendChild(clone);
-    this.dragState!.floatingEl = clone;
+    const els = Array.isArray(sourceEls) ? sourceEls : [sourceEls];
+    for (const el of els) {
+      container.appendChild(el.cloneNode(true));
+    }
+    document.body.appendChild(container);
+    this.dragState!.floatingEl = container;
   }
 
   private createFloatingEl(sourceEl: HTMLElement, x: number, y: number): HTMLElement {
-    const clone = sourceEl.cloneNode(true) as HTMLElement;
-    clone.style.cssText = `
-      position: fixed;
-      pointer-events: none;
-      opacity: 0.8;
-      z-index: 10000;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      left: ${x + 12}px;
-      top: ${y - 10}px;
-    `;
-    document.body.appendChild(clone);
-    return clone;
+    this.createFloatingPreview(sourceEl, x, y);
+    return this.dragState!.floatingEl!;
   }
 
   private createDropIndicator() {
@@ -621,9 +648,8 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       if (this.dragState.indicatorEl) {
         this.dragState.indicatorEl.remove();
       }
-      if (this.dragState.lineEl) {
-        this.dragState.lineEl.classList.remove('dragging-source');
-      }
+      // Un-dim all dragged elements
+      document.querySelectorAll('.dragging-source').forEach(el => el.classList.remove('dragging-source'));
     }
     if (this.displacedEl) {
       this.displacedEl.style.marginTop = '';
