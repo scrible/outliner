@@ -378,25 +378,25 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   private createDropIndicator() {
     const indicator = document.createElement('div');
-    indicator.className = 'drop-indicator-line';
+    indicator.className = 'drop-placeholder';
     indicator.style.cssText = `
       position: absolute;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: #0a7a70;
-      z-index: 9999;
+      left: 48px; right: 20px;
+      height: 32px;
+      border: 2px dashed #ccc;
+      border-radius: 4px;
+      background: #f9f9f9;
       pointer-events: none;
       display: none;
-      border-radius: 1px;
-      box-shadow: 0 0 4px rgba(10,122,112,0.4);
+      z-index: 5;
     `;
     const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
-    if (wrapper) {
-      wrapper.appendChild(indicator);
-    }
+    if (wrapper) wrapper.appendChild(indicator);
     this.dragState!.indicatorEl = indicator;
   }
+
+  // Track which element has displaced margin so we can clean it up
+  private displacedEl: HTMLElement | null = null;
 
   private attachGlobalListeners() {
     this.boundMouseMove = (e: MouseEvent) => {
@@ -450,49 +450,81 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    let bestTop = -1;
-    let bestIndex = -1;
-    let minDist = Infinity;
-
-    const checkBlock = (el: HTMLElement) => {
-      const rect = el.getBoundingClientRect();
-      if (rect.height === 0) return;
-      const blot = this.quill.scroll.find(el, true);
-      if (!blot) return;
-      const idx = this.quill.getIndex(blot as any);
-
-      const topDist = Math.abs(clientY - rect.top);
-      if (topDist < minDist) {
-        minDist = topDist;
-        bestTop = rect.top - wrapperRect.top;
-        bestIndex = idx;
-      }
-
-      const bottomDist = Math.abs(clientY - rect.bottom);
-      if (bottomDist < minDist) {
-        minDist = bottomDist;
-        bestTop = rect.bottom - wrapperRect.top;
-        const len = (blot as any).length ? (blot as any).length() : 1;
-        bestIndex = idx + len;
+    // Collect all block-level elements with their rects
+    const blocks: { el: HTMLElement; parent: HTMLElement; rect: DOMRect; quillIdx: number; quillLen: number }[] = [];
+    const collectBlocks = (parent: HTMLElement) => {
+      for (let i = 0; i < parent.children.length; i++) {
+        const el = parent.children[i] as HTMLElement;
+        if (el === this.dragState!.indicatorEl) continue;
+        const tag = el.tagName;
+        if (tag === 'OL' || tag === 'UL') {
+          collectBlocks(el);
+        } else {
+          const rect = el.getBoundingClientRect();
+          if (rect.height === 0) continue;
+          const blot = this.quill.scroll.find(el, true);
+          if (!blot) continue;
+          try {
+            const idx = this.quill.getIndex(blot as any);
+            const len = (blot as any).length ? (blot as any).length() : 1;
+            blocks.push({ el, parent: el.parentElement!, rect, quillIdx: idx, quillLen: len });
+          } catch {}
+        }
       }
     };
+    collectBlocks(editor as HTMLElement);
 
-    for (let i = 0; i < editor.children.length; i++) {
-      const el = editor.children[i] as HTMLElement;
-      const tag = el.tagName;
-      if (tag === 'OL' || tag === 'UL') {
-        for (let j = 0; j < el.children.length; j++) {
-          checkBlock(el.children[j] as HTMLElement);
-        }
-      } else {
-        checkBlock(el);
+    // Find the nearest block boundary
+    let bestBlock: typeof blocks[0] | null = null;
+    let insertBefore = true; // true = insert before bestBlock, false = insert after
+    let minDist = Infinity;
+
+    for (const block of blocks) {
+      const topDist = Math.abs(clientY - block.rect.top);
+      if (topDist < minDist) {
+        minDist = topDist;
+        bestBlock = block;
+        insertBefore = true;
+      }
+      const bottomDist = Math.abs(clientY - block.rect.bottom);
+      if (bottomDist < minDist) {
+        minDist = bottomDist;
+        bestBlock = block;
+        insertBefore = false;
       }
     }
 
-    if (bestTop >= 0) {
+    // Clean up previous displacement
+    if (this.displacedEl) {
+      this.displacedEl.style.marginTop = '';
+      this.displacedEl = null;
+    }
+
+    if (bestBlock) {
+      const targetEl = insertBefore ? bestBlock.el : (bestBlock.el.nextElementSibling as HTMLElement);
+      const wrapperRect = this.editorContainer.nativeElement.closest('.editor-wrapper')!.getBoundingClientRect();
+
+      if (insertBefore) {
+        // Position placeholder above bestBlock, displace bestBlock down
+        const rect = bestBlock.el.getBoundingClientRect();
+        this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect.top}px`;
+        bestBlock.el.style.marginTop = '40px';
+        this.displacedEl = bestBlock.el;
+        this.dragState.dropBeforeIndex = bestBlock.quillIdx;
+      } else if (targetEl) {
+        // Position placeholder above the next element
+        const rect = targetEl.getBoundingClientRect();
+        this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect.top}px`;
+        targetEl.style.marginTop = '40px';
+        this.displacedEl = targetEl;
+        this.dragState.dropBeforeIndex = bestBlock.quillIdx + bestBlock.quillLen;
+      } else {
+        // At the end — position after last block
+        const rect = bestBlock.el.getBoundingClientRect();
+        this.dragState.indicatorEl.style.top = `${rect.bottom - wrapperRect.top + 4}px`;
+        this.dragState.dropBeforeIndex = bestBlock.quillIdx + bestBlock.quillLen;
+      }
       this.dragState.indicatorEl.style.display = 'block';
-      this.dragState.indicatorEl.style.top = `${bestTop}px`;
-      this.dragState.dropBeforeIndex = bestIndex;
     } else {
       this.dragState.indicatorEl.style.display = 'none';
       this.dragState.dropBeforeIndex = undefined;
@@ -592,6 +624,10 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       if (this.dragState.lineEl) {
         this.dragState.lineEl.classList.remove('dragging-source');
       }
+    }
+    if (this.displacedEl) {
+      this.displacedEl.style.marginTop = '';
+      this.displacedEl = null;
     }
     this.dragState = null;
 
