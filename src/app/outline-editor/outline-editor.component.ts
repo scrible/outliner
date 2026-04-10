@@ -371,8 +371,16 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   private createFloatingPreview(sourceEls: HTMLElement | HTMLElement[], x: number, y: number) {
+    const els = Array.isArray(sourceEls) ? sourceEls : [sourceEls];
+
+    // Compute natural height from source elements
+    let totalHeight = 0;
+    for (const el of els) {
+      totalHeight += el.getBoundingClientRect().height;
+    }
+
     const container = document.createElement('div');
-    container.className = 'ql-editor'; // inherit editor styles
+    container.className = 'ql-editor';
     container.style.cssText = `
       position: fixed;
       pointer-events: none;
@@ -381,9 +389,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       background: white;
       border: 1px solid #ddd;
       border-radius: 4px;
-      padding: 8px 12px !important;
-      max-width: 500px;
-      max-height: 300px;
+      padding: 6px 10px !important;
+      max-width: 480px;
+      max-height: ${Math.min(totalHeight + 16, 250)}px;
       overflow: hidden;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       font-family: Arial, Helvetica, sans-serif;
@@ -394,7 +402,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       left: ${x + 12}px;
       top: ${y - 10}px;
     `;
-    const els = Array.isArray(sourceEls) ? sourceEls : [sourceEls];
     for (const el of els) {
       const clone = el.cloneNode(true) as HTMLElement;
       clone.classList.remove('dragging-source');
@@ -513,20 +520,20 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     const dragTag = dragEl?.tagName || '';
     const isHeadingDrag = dragTag === 'H1' || dragTag === 'H2' || dragTag === 'H3';
     const dragHeadingLevel = isHeadingDrag ? parseInt(dragTag[1]) : 0;
+    const isListItemDrag = dragTag === 'LI';
 
     // Filter to valid drop targets
     let validBlocks = blocks;
     if (isHeadingDrag) {
-      // Headings can only drop before/after sibling headings (same or higher level)
+      // Headings can only drop before/after sibling headings (same level)
       validBlocks = blocks.filter(b => {
         const t = b.el.tagName;
-        if (t === 'H1' || t === 'H2' || t === 'H3') {
-          return parseInt(t[1]) <= dragHeadingLevel;
-        }
-        return false;
+        return (t === 'H1' || t === 'H2' || t === 'H3') && parseInt(t[1]) <= dragHeadingLevel;
       });
-      // If no valid targets, allow all headings
       if (validBlocks.length === 0) validBlocks = blocks.filter(b => /^H[123]$/.test(b.el.tagName));
+    } else if (isListItemDrag) {
+      // List items can only drop among other list items (existing lists)
+      validBlocks = blocks.filter(b => b.el.tagName === 'LI');
     }
 
     let bestBlock: typeof blocks[0] | null = null;
@@ -868,20 +875,30 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // ──────────────────────────────────────
   exportToGoogleDoc() {
     const htmlContent = this.quill.root.innerHTML;
+    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Outline</title></head><body>${htmlContent}</body></html>`;
+
+    // Create a downloadable HTML file, then open Google Docs import
+    const blob = new Blob([fullHtml], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+
+    // Download the HTML file for the user
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'outline.html';
+    a.click();
+
+    // Also copy rich content to clipboard for easy paste
     navigator.clipboard.write([
       new ClipboardItem({
         'text/html': new Blob([htmlContent], { type: 'text/html' }),
         'text/plain': new Blob([this.quill.getText()], { type: 'text/plain' }),
       })
-    ]).then(() => {
+    ]).catch(() => {});
+
+    // Open Google Docs with instructions
+    setTimeout(() => {
       window.open('https://docs.google.com/document/create', '_blank');
-    }).catch(() => {
-      const blob = new Blob([`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${htmlContent}</body></html>`], { type: 'text/html' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'outline.html';
-      a.click();
-    });
+    }, 500);
   }
 
   trackByIndex(index: number) { return index; }
