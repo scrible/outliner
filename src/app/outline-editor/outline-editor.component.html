@@ -25,10 +25,13 @@
            (dragleave)="onEditorDragLeave()"
            (drop)="onEditorDrop($event)">
 
-        <!-- Heading drag handles (overlay) -->
+        <!-- Heading drag handles -->
         @for (h of headingHandles; track h.index) {
           <div class="heading-drag-handle"
                [style.top.px]="h.top"
+               draggable="true"
+               (dragstart)="onHeadingDragStart($event, h)"
+               (dragend)="onHeadingDragEnd()"
                title="Drag to move this section"
                role="button"
                aria-label="Drag to reorder section">

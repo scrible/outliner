@@ -33,6 +33,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   ];
 
   headingHandles: { el: HTMLElement; top: number; index: number }[] = [];
+  draggedHeadingIndex: number | null = null;
 
   constructor(private zone: NgZone, private cdr: ChangeDetectorRef) {}
 
@@ -58,6 +59,30 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         history: { delay: 500, maxStack: 100, userOnly: true },
       },
     });
+
+    // Intercept drop events in capture phase BEFORE Quill's clipboard module sees them
+    const editorEl = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
+    if (editorEl) {
+      editorEl.addEventListener('dragover', (e: DragEvent) => {
+        if (this.draggedSource || this.draggedHeadingIndex !== null) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = this.draggedSource ? 'copy' : 'move';
+        }
+      }, true); // capture phase
+
+      editorEl.addEventListener('drop', (e: DragEvent) => {
+        if (this.draggedSource) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.handleSourceDrop(e);
+        } else if (this.draggedHeadingIndex !== null) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.handleHeadingDrop(e);
+        }
+      }, true); // capture phase
+    }
 
     this.loadDemoContent();
     setTimeout(() => this.updateHeadingHandles(), 300);
@@ -209,6 +234,103 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   // --- Heading Drag (within editor) ---
+  onHeadingDragStart(event: DragEvent, handle: any) {
+    this.draggedHeadingIndex = handle.index;
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', ''); // required for Firefox
+    }
+  }
+
+  onHeadingDragEnd() {
+    this.draggedHeadingIndex = null;
+  }
+
+  private handleSourceDrop(event: DragEvent) {
+    const source = this.draggedSource;
+    this.draggedSource = null;
+    this.editorDragOver = false;
+    if (!source) return;
+
+    const citation = this.formatMLA(source);
+    let insertIndex = this.quill.getLength() - 1;
+    try {
+      const range = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
+      if (range) {
+        const blot = this.quill.scroll.find(range.startContainer, true);
+        if (blot) {
+          const bi = this.quill.getIndex(blot as any);
+          const [line] = this.quill.getLine(bi);
+          if (line) insertIndex = this.quill.getIndex(line as any) + line.length();
+        }
+      }
+    } catch {}
+    this.quill.insertText(insertIndex, '\n', 'user');
+    this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
+    this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
+  }
+
+  private handleHeadingDrop(event: DragEvent) {
+    const sourceIdx = this.draggedHeadingIndex;
+    this.draggedHeadingIndex = null;
+    if (sourceIdx === null) return;
+
+    const section = this.getHeadingSectionRange(sourceIdx);
+    if (!section) return;
+
+    // Find target line from drop position
+    let targetIndex = this.quill.getLength() - 1;
+    try {
+      const range = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
+      if (range) {
+        const blot = this.quill.scroll.find(range.startContainer, true);
+        if (blot) targetIndex = this.quill.getIndex(blot as any);
+      }
+    } catch {}
+
+    // Don't drop inside the section being moved
+    if (targetIndex >= section.start && targetIndex < section.start + section.length) return;
+
+    const delta = this.quill.getContents(section.start, section.length);
+    this.quill.deleteText(section.start, section.length, 'user');
+    if (targetIndex > section.start) targetIndex -= section.length;
+    if (targetIndex < 0) targetIndex = 0;
+    this.quill.updateContents({
+      ops: [...(targetIndex > 0 ? [{ retain: targetIndex }] : []), ...delta.ops!]
+    } as any, 'user');
+
+    requestAnimationFrame(() => this.updateHeadingHandles());
+  }
+
+  getHeadingSectionRange(startIndex: number): { start: number; length: number } | null {
+    // Verify the start line is a heading
+    const [startLine] = this.quill.getLine(startIndex);
+    if (!startLine) return null;
+    const startLineIdx = this.quill.getIndex(startLine as any);
+    const startFmt = this.quill.getFormat(startLineIdx, (startLine as any).length());
+    if (!startFmt['header']) return null;
+    const sectionLevel = startFmt['header'] as number;
+
+    // Walk forward line by line to find the end of this section
+    let pos = startLineIdx + (startLine as any).length();
+    const docLen = this.quill.getLength();
+
+    while (pos < docLen) {
+      const [nextLine] = this.quill.getLine(pos);
+      if (!nextLine) break;
+      const nextIdx = this.quill.getIndex(nextLine as any);
+      const nextLen = (nextLine as any).length();
+      const nextFmt = this.quill.getFormat(nextIdx, nextLen);
+
+      if (nextFmt['header'] && (nextFmt['header'] as number) <= sectionLevel) {
+        return { start: startLineIdx, length: nextIdx - startLineIdx };
+      }
+      pos = nextIdx + nextLen;
+    }
+
+    return { start: startLineIdx, length: docLen - startLineIdx };
+  }
+
   updateHeadingHandles() {
     const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
     if (!editor) return;
