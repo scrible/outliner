@@ -234,15 +234,24 @@
 .source-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
   border-radius: 8px;
-  cursor: grab;
   transition: background 0.12s;
   margin: 2px 0;
 
   &:hover { background: #f3f4f6; }
-  &:active { cursor: grabbing; }
+
+  .source-card-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    cursor: grab;
+    padding: 4px 0;
+    &:active { cursor: grabbing; }
+  }
 
   .source-favicon {
     width: 24px;
@@ -271,12 +280,28 @@
     color: #6b7280;
     margin-top: 1px;
   }
+}
 
-  .drag-hint {
-    color: #d1d5db;
-    font-size: 18px;
-    flex-shrink: 0;
-  }
+.cite-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: white;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.12s;
+  &:hover { background: #0a7a70; color: white; border-color: #0a7a70; }
+}
+
+.editor-wrapper.drag-target {
+  outline: 2px dashed #0a7a70;
+  outline-offset: -2px;
+  border-radius: 8px;
+  background: #f0fdf9;
 }
 
 .preview-nav {

@@ -1,4 +1,4 @@
-import { Component, AfterViewInit, ElementRef, ViewChild, OnDestroy, ViewEncapsulation, NgZone, ChangeDetectorRef } from '@angular/core';
+import { Component, AfterViewInit, ElementRef, ViewChild, OnDestroy, ViewEncapsulation, NgZone, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SafeUrlPipe } from '../safe-url.pipe';
 import Quill from 'quill';
@@ -21,15 +21,18 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   showPreview = false;
   previewLoading = false;
 
+  // Drag state tracked in component — avoids dataTransfer cross-element issues
+  draggedSource: any = null;
+  editorDragOver = false;
+
   sampleSources = [
-    { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024', favicon: 'https://mars.nasa.gov/favicon.ico' },
-    { title: 'Mars 2020 Perseverance Rover', url: 'https://science.nasa.gov/mission/mars-2020-perseverance/', author: 'NASA Science', date: '2024', favicon: 'https://science.nasa.gov/favicon.ico' },
-    { title: 'Water on Mars — Wikipedia', url: 'https://en.wikipedia.org/wiki/Water_on_Mars', author: 'Wikipedia contributors', date: '2024', favicon: 'https://en.wikipedia.org/favicon.ico' },
-    { title: 'SpaceX Starship', url: 'https://www.spacex.com/vehicles/starship/', author: 'SpaceX', date: '2024', favicon: 'https://www.spacex.com/favicon.ico' },
+    { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024' },
+    { title: 'Mars 2020 Perseverance Rover', url: 'https://science.nasa.gov/mission/mars-2020-perseverance/', author: 'NASA Science', date: '2024' },
+    { title: 'Water on Mars — Wikipedia', url: 'https://en.wikipedia.org/wiki/Water_on_Mars', author: 'Wikipedia contributors', date: '2024' },
+    { title: 'SpaceX Starship', url: 'https://www.spacex.com/vehicles/starship/', author: 'SpaceX', date: '2024' },
   ];
 
   headingHandles: { el: HTMLElement; top: number; index: number }[] = [];
-  dragSourceIndex: number | null = null;
 
   constructor(private zone: NgZone, private cdr: ChangeDetectorRef) {}
 
@@ -62,16 +65,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.quill.on('text-change', () => {
       requestAnimationFrame(() => this.updateHeadingHandles());
     });
-
-    // Set up native drop handling on the Quill editor element
-    const editorEl = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
-    if (editorEl) {
-      editorEl.addEventListener('dragover', (e: DragEvent) => {
-        e.preventDefault();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-      });
-      editorEl.addEventListener('drop', (e: DragEvent) => this.handleEditorDrop(e));
-    }
   }
 
   ngOnDestroy() {}
@@ -84,12 +77,8 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.previewLoading = true;
     this.previewHtml = '';
 
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(source.url)}`;
-    fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
-      .then(r => {
-        if (!r.ok) throw new Error('proxy failed');
-        return r.text();
-      })
+    // Try corsproxy.io first, then allorigins as fallback
+    this.fetchWithProxy(source.url)
       .then(html => {
         const base = `<base href="${source.url}"><style>body{font-family:system-ui,sans-serif;}</style>`;
         this.zone.run(() => {
@@ -105,6 +94,21 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       });
   }
 
+  private async fetchWithProxy(url: string): Promise<string> {
+    // Try multiple CORS proxies in order
+    const proxies = [
+      `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    ];
+    for (const proxyUrl of proxies) {
+      try {
+        const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+        if (r.ok) return await r.text();
+      } catch {}
+    }
+    throw new Error('All proxies failed');
+  }
+
   closePreview() {
     this.showPreview = false;
     this.previewUrl = '';
@@ -117,70 +121,83 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.previewTitle = 'Source Preview';
   }
 
-  // --- Citation Drag from Source ---
+  // --- Citation Drag & Drop (component-state approach) ---
   onSourceDragStart(event: DragEvent, source: any) {
-    if (!event.dataTransfer) return;
-    const citation = this.formatMLA(source);
-    event.dataTransfer.setData('text/plain', citation);
-    event.dataTransfer.setData('application/x-scrible-citation', JSON.stringify(source));
-    event.dataTransfer.effectAllowed = 'copy';
+    this.draggedSource = source;
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('text/plain', this.formatMLA(source));
+    }
   }
 
-  private handleEditorDrop(event: DragEvent) {
-    const sourceJson = event.dataTransfer?.getData('application/x-scrible-citation');
-    const headingData = event.dataTransfer?.getData('application/x-heading-drag');
+  onSourceDragEnd() {
+    this.draggedSource = null;
+    this.editorDragOver = false;
+  }
 
-    if (headingData && this.dragSourceIndex !== null) {
-      event.preventDefault();
-      this.handleHeadingDrop(event);
-      return;
-    }
-
-    if (!sourceJson) return;
+  onEditorDragOver(event: DragEvent) {
+    if (!this.draggedSource) return;
     event.preventDefault();
     event.stopPropagation();
-
-    const source = JSON.parse(sourceJson);
-    const citation = this.formatMLA(source);
-
-    // Get drop position using caret APIs
-    let insertIndex = this.quill.getLength() - 1;
-    const doc = document as any;
-    if (doc.caretRangeFromPoint) {
-      const range = doc.caretRangeFromPoint(event.clientX, event.clientY);
-      if (range) {
-        // Find the line-level position: go to end of current line
-        const sel = this.quill.getSelection();
-        try {
-          const blot = this.quill.scroll.find(range.startContainer, true);
-          if (blot) {
-            const blotIndex = this.quill.getIndex(blot as any);
-            // Find end of current line
-            const [line] = this.quill.getLine(blotIndex);
-            if (line) {
-              insertIndex = this.quill.getIndex(line as any) + line.length();
-            }
-          }
-        } catch {
-          // fallback — insert at end
-        }
-      }
-    }
-
-    // Insert a newline, then the citation as a blockquote
-    this.quill.insertText(insertIndex, '\n', 'user');
-    this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
-    this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    this.editorDragOver = true;
   }
 
-  // Wrapper for template (dragover on editor-wrapper)
-  onEditorDragOver(event: DragEvent) {
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  onEditorDragLeave() {
+    this.editorDragOver = false;
   }
 
   onEditorDrop(event: DragEvent) {
-    // Handled by native listener on .ql-editor — this is a fallback
+    event.preventDefault();
+    event.stopPropagation();
+    this.editorDragOver = false;
+
+    if (!this.draggedSource) return;
+    const source = this.draggedSource;
+    this.draggedSource = null;
+
+    const citation = this.formatMLA(source);
+
+    // Find insert position from drop coordinates
+    let insertIndex = this.quill.getLength() - 1;
+    try {
+      const caretRange = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
+      if (caretRange) {
+        const blot = this.quill.scroll.find(caretRange.startContainer, true);
+        if (blot) {
+          const blotIndex = this.quill.getIndex(blot as any);
+          const [line] = this.quill.getLine(blotIndex);
+          if (line) {
+            insertIndex = this.quill.getIndex(line as any) + line.length();
+          }
+        }
+      }
+    } catch {}
+
+    // Insert citation as blockquote
+    this.quill.insertText(insertIndex, '\n', 'user');
+    this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
+    this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
+    this.quill.setSelection(insertIndex + 2 + citation.length, 0);
+  }
+
+  // "Cite" button fallback — always works
+  insertCitation(source: any) {
+    const citation = this.formatMLA(source);
+    const sel = this.quill.getSelection();
+    let insertIndex = sel ? sel.index : this.quill.getLength() - 1;
+
+    // Go to end of current line
+    try {
+      const [line] = this.quill.getLine(insertIndex);
+      if (line) insertIndex = this.quill.getIndex(line as any) + line.length();
+    } catch {}
+
+    this.quill.insertText(insertIndex, '\n', 'user');
+    this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
+    this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
+    this.quill.setSelection(insertIndex + 2 + citation.length, 0);
+    this.quill.focus();
   }
 
   formatMLA(source: any): string {
@@ -216,69 +233,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.cdr.detectChanges();
   }
 
-  onHeadingDragStart(event: DragEvent, handle: any) {
-    this.dragSourceIndex = handle.index;
-    event.dataTransfer?.setData('text/plain', 'heading-move');
-    event.dataTransfer?.setData('application/x-heading-drag', String(handle.index));
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
-  }
-
-  private handleHeadingDrop(event: DragEvent) {
-    const sourceIdx = this.dragSourceIndex!;
-    const range = this.getHeadingSectionRange(sourceIdx);
-    if (!range) { this.dragSourceIndex = null; return; }
-
-    let targetIndex = this.quill.getLength() - 1;
-    const doc = document as any;
-    if (doc.caretRangeFromPoint) {
-      const caretRange = doc.caretRangeFromPoint(event.clientX, event.clientY);
-      if (caretRange) {
-        try {
-          const blot = this.quill.scroll.find(caretRange.startContainer, true);
-          if (blot) targetIndex = this.quill.getIndex(blot as any);
-        } catch {}
-      }
-    }
-
-    const delta = this.quill.getContents(range.start, range.length);
-    this.quill.deleteText(range.start, range.length, 'user');
-    if (targetIndex > range.start) targetIndex -= range.length;
-    if (targetIndex < 0) targetIndex = 0;
-    this.quill.updateContents({ ops: [{ retain: targetIndex }, ...delta.ops!] } as any, 'user');
-
-    this.dragSourceIndex = null;
-  }
-
-  onHeadingDrop(event: DragEvent) {
-    // handled in handleEditorDrop
-  }
-
-  getHeadingSectionRange(startIndex: number): { start: number; length: number } | null {
-    const content = this.quill.getContents();
-    let currentIdx = 0;
-    let sectionStart = -1;
-    let sectionLevel = 0;
-    let sectionEnd = this.quill.getLength();
-
-    for (const op of content.ops!) {
-      const text = typeof op.insert === 'string' ? op.insert : '\n';
-      const len = text.length;
-      const header = (op.attributes as any)?.header;
-
-      if (currentIdx === startIndex && header) {
-        sectionStart = currentIdx;
-        sectionLevel = header;
-      } else if (sectionStart >= 0 && header && header <= sectionLevel && currentIdx > sectionStart) {
-        sectionEnd = currentIdx;
-        break;
-      }
-      currentIdx += len;
-    }
-
-    if (sectionStart < 0) return null;
-    return { start: sectionStart, length: sectionEnd - sectionStart };
-  }
-
   // --- Export to Google Docs ---
   exportToGoogleDoc() {
     const htmlContent = this.quill.root.innerHTML;
@@ -306,12 +260,10 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       ops: [
         { insert: 'Mars Colonization: Economic Feasibility Study' },
         { insert: '\n', attributes: { header: 1 } },
-
         { insert: 'Thesis' },
         { insert: '\n', attributes: { header: 2 } },
         { insert: 'The rapid advancement of reusable rocket technology has fundamentally altered the economic landscape of space exploration, making Mars colonization a realistic near-term goal.' },
         { insert: '\n', attributes: { list: 'bullet' } },
-
         { insert: 'Background' },
         { insert: '\n', attributes: { header: 2 } },
         { insert: 'NASA\'s Mars Exploration Program has systematically studied Mars since the 1990s with rovers, orbiters, and landers.' },
@@ -320,7 +272,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         { insert: '\n', attributes: { list: 'bullet' } },
         { insert: 'NASA. \u201cMars 2020 Perseverance Rover.\u201d science.nasa.gov, 2024. Web.' },
         { insert: '\n', attributes: { blockquote: true } },
-
         { insert: 'Economic Feasibility' },
         { insert: '\n', attributes: { header: 2 } },
         { insert: 'Launch cost reduction' },
@@ -335,7 +286,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         { insert: '\n', attributes: { list: 'bullet', indent: 1 } },
         { insert: 'MOXIE experiment on Perseverance successfully produced oxygen from CO\u2082.' },
         { insert: '\n', attributes: { list: 'bullet', indent: 1 } },
-
         { insert: 'Conclusion' },
         { insert: '\n', attributes: { header: 2 } },
         { insert: 'The convergence of reduced launch costs, advancing life support, and international collaboration suggests a permanent Mars presence is achievable within two decades.' },

@@ -2,8 +2,12 @@ services:
   - type: web
     name: scrible-outliner
     runtime: static
-    buildCommand: npm install && npm run build -- --configuration production
+    repo: https://github.com/bwthomas/outliner
+    buildCommand: npm install --legacy-peer-deps && npm run build -- --configuration production
     staticPublishPath: dist/outliner/browser
+    envVars:
+      - key: NODE_VERSION
+        value: "18.19.1"
     headers:
       - path: /*
         name: Cache-Control

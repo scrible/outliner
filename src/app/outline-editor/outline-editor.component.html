@@ -20,14 +20,15 @@
 
     <div class="editor-scroll" tabindex="0" role="region" aria-label="Outline content">
       <div class="editor-wrapper"
-           (dragover)="onEditorDragOver($event)">
+           [class.drag-target]="editorDragOver"
+           (dragover)="onEditorDragOver($event)"
+           (dragleave)="onEditorDragLeave()"
+           (drop)="onEditorDrop($event)">
 
         <!-- Heading drag handles (overlay) -->
         @for (h of headingHandles; track h.index) {
           <div class="heading-drag-handle"
                [style.top.px]="h.top"
-               draggable="true"
-               (dragstart)="onHeadingDragStart($event, h)"
                title="Drag to move this section"
                role="button"
                aria-label="Drag to reorder section">
@@ -53,24 +54,28 @@
       @if (!previewUrl) {
         <!-- Source list -->
         <div class="source-list">
-          <p class="source-hint">Drag a source onto the outline to insert an MLA citation. Click to preview.</p>
+          <p class="source-hint">Drag a source onto the outline, or click <strong>Cite</strong> to insert an MLA citation at the cursor.</p>
           @for (source of sampleSources; track source.url) {
-            <div class="source-card"
-                 draggable="true"
-                 (dragstart)="onSourceDragStart($event, source)"
-                 (click)="openPreview(source)"
-                 role="button"
-                 [attr.aria-label]="'Source: ' + source.title + '. Drag to cite or click to preview.'">
-              <img class="source-favicon"
-                   [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
-                   [alt]="''"
-                   width="24" height="24"
-                   aria-hidden="true">
-              <div class="source-info">
-                <div class="source-name">{{ source.title }}</div>
-                <div class="source-meta">{{ source.author }} &middot; {{ source.date }}</div>
+            <div class="source-card">
+              <div class="source-card-main"
+                   draggable="true"
+                   (dragstart)="onSourceDragStart($event, source)"
+                   (dragend)="onSourceDragEnd()"
+                   (click)="openPreview(source)"
+                   role="button"
+                   [attr.aria-label]="'Source: ' + source.title">
+                <img class="source-favicon"
+                     [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
+                     alt="" width="24" height="24" aria-hidden="true">
+                <div class="source-info">
+                  <div class="source-name">{{ source.title }}</div>
+                  <div class="source-meta">{{ source.author }} &middot; {{ source.date }}</div>
+                </div>
               </div>
-              <span class="material-icons drag-hint" aria-hidden="true">drag_indicator</span>
+              <button class="cite-btn" (click)="insertCitation(source); $event.stopPropagation()"
+                      [attr.aria-label]="'Insert citation for ' + source.title">
+                Cite
+              </button>
             </div>
           }
         </div>
