@@ -450,22 +450,17 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    const children = editor.children;
     let bestTop = -1;
     let bestIndex = -1;
     let minDist = Infinity;
-    (window as any).__dropDebug = `children=${children.length}, clientY=${clientY}`;
 
-    for (let i = 0; i < children.length; i++) {
-      const el = children[i] as HTMLElement;
+    const checkBlock = (el: HTMLElement) => {
       const rect = el.getBoundingClientRect();
-      if (rect.height === 0) continue;
-
+      if (rect.height === 0) return;
       const blot = this.quill.scroll.find(el, true);
-      if (!blot) continue;
+      if (!blot) return;
       const idx = this.quill.getIndex(blot as any);
 
-      // Check distance to top edge of this line
       const topDist = Math.abs(clientY - rect.top);
       if (topDist < minDist) {
         minDist = topDist;
@@ -473,13 +468,24 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         bestIndex = idx;
       }
 
-      // Check distance to bottom edge of this line (insert after)
       const bottomDist = Math.abs(clientY - rect.bottom);
       if (bottomDist < minDist) {
         minDist = bottomDist;
         bestTop = rect.bottom - wrapperRect.top;
         const len = (blot as any).length ? (blot as any).length() : 1;
         bestIndex = idx + len;
+      }
+    };
+
+    for (let i = 0; i < editor.children.length; i++) {
+      const el = editor.children[i] as HTMLElement;
+      const tag = el.tagName;
+      if (tag === 'OL' || tag === 'UL') {
+        for (let j = 0; j < el.children.length; j++) {
+          checkBlock(el.children[j] as HTMLElement);
+        }
+      } else {
+        checkBlock(el);
       }
     }
 
