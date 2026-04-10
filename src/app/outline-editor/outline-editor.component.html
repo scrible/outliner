@@ -11,20 +11,22 @@
                 aria-label="Toggle source panel">
           <span class="material-icons" aria-hidden="true">web</span> Sources
         </button>
-        <button class="btn btn-ghost" (click)="exportToGoogleDoc()" aria-label="Copy outline to clipboard"
-                title="Copy outline to clipboard">
-          <span class="material-icons" aria-hidden="true">content_copy</span>
-        </button>
       </div>
     </header>
     <div class="editor-scroll" tabindex="0" role="region" aria-label="Outline content">
       <div class="editor-wrapper">
         @if (hoveredHandle && !dragState) {
-          <div class="line-drag-handle visible"
-               [style.top.px]="hoveredHandle.top"
-               (mousedown)="onLineHandleMouseDown($event, hoveredHandle)"
-               title="Drag to move" role="button" aria-label="Drag to reorder">
-            <span class="material-icons" aria-hidden="true">drag_indicator</span>
+          <div class="line-handle-group" [style.top.px]="hoveredHandle.top">
+            <div class="line-copy-handle"
+                 (click)="copyLineToClipboard(hoveredHandle)"
+                 title="Copy to clipboard" role="button" aria-label="Copy element">
+              <span class="material-icons" aria-hidden="true">content_copy</span>
+            </div>
+            <div class="line-drag-handle visible"
+                 (mousedown)="onLineHandleMouseDown($event, hoveredHandle)"
+                 title="Drag to move" role="button" aria-label="Drag to reorder">
+              <span class="material-icons" aria-hidden="true">drag_indicator</span>
+            </div>
           </div>
         }
         <div #editorContainer class="quill-host" role="textbox" aria-label="Outline editor" aria-multiline="true"></div>
@@ -88,8 +90,8 @@
   @if (exportToastVisible) {
     <div class="export-toast" role="alert">
       <span class="material-icons" aria-hidden="true">check_circle</span>
-      <span>Outline copied! Paste with <kbd>Cmd+V</kbd> into
-        <a href="https://docs.google.com/document/create" target="_blank" rel="noopener noreferrer" class="toast-link">a new Google Doc</a>
+      <span>Outline copied! Paste with <kbd>{{ pasteShortcut }}</kbd> into a
+        <a href="https://docs.google.com/document/create" target="_blank" rel="noopener noreferrer" class="toast-link">Google Doc</a>
         or any document.
       </span>
       <button class="toast-close" (click)="exportToastVisible = false" aria-label="Dismiss">

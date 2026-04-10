@@ -116,15 +116,27 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
               if (lineText.trim() === '') {
                 const lineIdx = this.quill.getIndex(line as any);
                 const lineLen = (line as any).length();
-                // Delete empty line
                 this.quill.deleteText(lineIdx, lineLen, 'user');
-                // Move cursor to end of previous line
-                if (lineIdx > 0) {
-                  this.quill.setSelection(lineIdx - 1, 0);
-                }
+                if (lineIdx > 0) this.quill.setSelection(lineIdx - 1, 0);
                 return false;
               }
-              return true; // let normal enter behavior proceed
+              return true;
+            }},
+            // Enter on blockquote: insert a new bullet list item (not another blockquote)
+            'blockquote enter': { key: 'Enter', collapsed: true, format: ['blockquote'], handler: (range: any) => {
+              const idx = range.index;
+              this.quill.insertText(idx, '\n', 'user');
+              this.quill.formatLine(idx + 1, 1, { blockquote: false, list: 'bullet' }, 'user');
+              this.quill.setSelection(idx + 1, 0);
+              return false;
+            }},
+            // Enter at end of heading: insert a new bullet list item
+            'heading enter': { key: 'Enter', collapsed: true, format: ['header'], handler: (range: any) => {
+              const idx = range.index;
+              this.quill.insertText(idx, '\n', 'user');
+              this.quill.formatLine(idx + 1, 1, { header: false, list: 'bullet' }, 'user');
+              this.quill.setSelection(idx + 1, 0);
+              return false;
             }},
           }
         },
@@ -149,6 +161,20 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       }
     });
 
+    // Override list toolbar handler: clicking same list type should do nothing (not remove list)
+    const toolbar = this.quill.getModule('toolbar') as any;
+    if (toolbar) {
+      toolbar.addHandler('list', (value: string) => {
+        const sel = this.quill.getSelection();
+        if (!sel) return;
+        const fmt = this.quill.getFormat(sel.index, sel.length || 1);
+        const currentList = (fmt as any)['list'];
+        // If clicking same list type, do nothing (don't toggle off)
+        if (currentList === value) return;
+        this.quill.format('list', value);
+      });
+    }
+
     // Track mouse position for single hover handle
     const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
     if (wrapper) {
@@ -164,6 +190,11 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
     this.loadDemoContent();
     setTimeout(() => this.updateLineHandles(), 300);
+
+    // Track last focused position for citation insert
+    this.quill.on('selection-change', (range: any) => {
+      if (range) this.lastFocusedIndex = range.index;
+    });
 
     let formatTimer: any = null;
     this.quill.on('text-change', (_delta: any, _oldDelta: any, source: string) => {
@@ -201,10 +232,45 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // ──────────────────────────────────────
   // Citation insertion (Cite button)
   // ──────────────────────────────────────
+  lastFocusedIndex: number = 0;
+  pasteShortcut = navigator.platform?.includes('Mac') ? '\u2318V' : 'Ctrl+V';
+
+  copyLineToClipboard(handle: { el: HTMLElement; index: number; length: number }) {
+    const tag = handle.el.tagName;
+    let copyIndex = handle.index;
+    let copyLength = handle.length;
+    // For headings, copy the whole section
+    if (/^H[123]$/.test(tag)) {
+      const range = this.getHeadingSectionRange(handle.index);
+      if (range) { copyIndex = range.start; copyLength = range.length; }
+    }
+    const html = this.quill.root.innerHTML; // fallback
+    const text = this.quill.getText(copyIndex, copyLength);
+    const delta = this.quill.getContents(copyIndex, copyLength);
+    // Create a temp Quill to render the delta as HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.style.display = 'none';
+    document.body.appendChild(tempDiv);
+    const tempQuill = new Quill(tempDiv, { readOnly: true });
+    tempQuill.setContents(delta);
+    const richHtml = tempQuill.root.innerHTML;
+    document.body.removeChild(tempDiv);
+
+    navigator.clipboard.write([
+      new ClipboardItem({
+        'text/html': new Blob([richHtml], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+      })
+    ]).catch(() => {});
+    this.exportToastVisible = true;
+    this.cdr.detectChanges();
+  }
+
   insertCitation(source: any) {
     const citation = this.formatMLA(source);
+    // Insert at last focused position, not end of document
     const sel = this.quill.getSelection();
-    let insertIndex = sel ? sel.index : this.quill.getLength() - 1;
+    let insertIndex = sel ? sel.index : this.lastFocusedIndex || this.quill.getLength() - 1;
 
     try {
       const [line] = this.quill.getLine(insertIndex);
@@ -897,12 +963,13 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       const text = q.getText(lineIdx, lineLen);
       const fmt = q.getFormat(lineIdx, lineLen);
 
-      // 1. Remove empty/whitespace-only lines (including empty list items, blockquotes, paragraphs)
-      //    Keep headings (section markers) and the final newline
+      // 1. Remove empty/whitespace-only lines, BUT skip the line the cursor is on
       const textContent = text.replace(/[\n\s]/g, '');
-      if (textContent === '' && !fmt['header'] && pos + lineLen < q.getLength()) {
+      const sel = q.getSelection();
+      const cursorOnThisLine = sel && sel.index >= lineIdx && sel.index < lineIdx + lineLen;
+      if (textContent === '' && !fmt['header'] && !cursorOnThisLine && pos + lineLen < q.getLength()) {
         q.deleteText(lineIdx, lineLen, 'silent');
-        len = q.getLength(); // recalculate length
+        len = q.getLength();
         continue;
       }
 
