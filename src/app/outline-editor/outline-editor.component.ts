@@ -108,6 +108,24 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
               if (sel) this.quill.formatLine(sel.index, 1, 'indent', '+1');
               return false;
             }},
+            // Enter on empty list item: delete the line and move cursor to end of previous line
+            'empty list enter': { key: 'Enter', collapsed: true, format: ['list'], handler: (range: any) => {
+              const [line] = this.quill.getLine(range.index);
+              if (!line) return true;
+              const lineText = this.quill.getText(this.quill.getIndex(line as any), (line as any).length());
+              if (lineText.trim() === '') {
+                const lineIdx = this.quill.getIndex(line as any);
+                const lineLen = (line as any).length();
+                // Delete empty line
+                this.quill.deleteText(lineIdx, lineLen, 'user');
+                // Move cursor to end of previous line
+                if (lineIdx > 0) {
+                  this.quill.setSelection(lineIdx - 1, 0);
+                }
+                return false;
+              }
+              return true; // let normal enter behavior proceed
+            }},
           }
         },
         history: { delay: 500, maxStack: 100, userOnly: true },
@@ -147,8 +165,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.loadDemoContent();
     setTimeout(() => this.updateLineHandles(), 300);
 
-    this.quill.on('text-change', () => {
+    let formatTimer: any = null;
+    this.quill.on('text-change', (_delta: any, _oldDelta: any, source: string) => {
       requestAnimationFrame(() => this.updateLineHandles());
+      // Run formatter on user changes (debounced to avoid fighting with typing)
+      if (source === 'user') {
+        clearTimeout(formatTimer);
+        formatTimer = setTimeout(() => this.formatOutline(), 300);
+      }
     });
   }
 
@@ -946,7 +970,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // Export abstraction — swappable for Google Drive API later
   // ──────────────────────────────────────
   private exportOutline(html: string, plainText: string) {
-    // Strategy: clipboard + new Google Doc (option 3)
+    // Strategy: clipboard + toast with link (option 3)
     // TODO: Replace with Google Drive API upload (option 1)
     navigator.clipboard.write([
       new ClipboardItem({
@@ -955,23 +979,12 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       })
     ]).catch(() => {});
 
-    // Show toast notification
-    this.showExportToast();
-
-    setTimeout(() => {
-      window.open('https://docs.google.com/document/create', '_blank');
-    }, 300);
+    // Show persistent toast (user dismisses manually)
+    this.exportToastVisible = true;
+    this.cdr.detectChanges();
   }
 
   exportToastVisible = false;
-  private showExportToast() {
-    this.exportToastVisible = true;
-    this.cdr.detectChanges();
-    setTimeout(() => {
-      this.exportToastVisible = false;
-      this.cdr.detectChanges();
-    }, 6000);
-  }
 
   // ──────────────────────────────────────
   // Keyboard navigation

@@ -109,7 +109,7 @@ $panel-width: 380px;
     blockquote {
       border-left: 3px solid $accent-border;
       padding: 5px 10px;
-      margin: 4px 0 4px 1.5em;
+      margin: 4px 0 4px 3em;
       background: $accent-light;
       color: #78600e;
       font-size: 13px;
@@ -233,6 +233,17 @@ $panel-width: 380px;
     border-radius: 3px;
     font-family: inherit;
     font-size: 13px;
+  }
+  .toast-link {
+    color: #8dd4e0;
+    text-decoration: underline;
+    &:hover { color: white; }
+  }
+  .toast-close {
+    background: none; border: none; color: rgba(255,255,255,0.6);
+    cursor: pointer; padding: 2px; display: flex; margin-left: 8px;
+    &:hover { color: white; }
+    .material-icons { font-size: 16px; }
   }
 }
 @keyframes toast-in {

@@ -11,9 +11,9 @@
                 aria-label="Toggle source panel">
           <span class="material-icons" aria-hidden="true">web</span> Sources
         </button>
-        <button class="btn btn-primary" (click)="exportToGoogleDoc()" aria-label="Export to Google Docs"
-                title="Copies outline to clipboard, then opens a new Google Doc. Press Cmd+V to paste.">
-          <span class="material-icons" aria-hidden="true">open_in_new</span> Google Docs
+        <button class="btn btn-ghost" (click)="exportToGoogleDoc()" aria-label="Copy outline to clipboard"
+                title="Copy outline to clipboard">
+          <span class="material-icons" aria-hidden="true">content_copy</span>
         </button>
       </div>
     </header>
@@ -87,8 +87,14 @@
   <!-- Export toast -->
   @if (exportToastVisible) {
     <div class="export-toast" role="alert">
-      <span class="material-icons" aria-hidden="true">content_paste</span>
-      Outline copied to clipboard. Press <kbd>Cmd+V</kbd> (or <kbd>Ctrl+V</kbd>) to paste into the new Google Doc.
+      <span class="material-icons" aria-hidden="true">check_circle</span>
+      <span>Outline copied! Paste with <kbd>Cmd+V</kbd> into
+        <a href="https://docs.google.com/document/create" target="_blank" rel="noopener noreferrer" class="toast-link">a new Google Doc</a>
+        or any document.
+      </span>
+      <button class="toast-close" (click)="exportToastVisible = false" aria-label="Dismiss">
+        <span class="material-icons" aria-hidden="true">close</span>
+      </button>
     </div>
   }
 </div>
