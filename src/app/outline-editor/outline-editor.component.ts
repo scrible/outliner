@@ -372,6 +372,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   private createFloatingPreview(sourceEls: HTMLElement | HTMLElement[], x: number, y: number) {
     const container = document.createElement('div');
+    container.className = 'ql-editor'; // inherit editor styles
     container.style.cssText = `
       position: fixed;
       pointer-events: none;
@@ -380,19 +381,25 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       background: white;
       border: 1px solid #ddd;
       border-radius: 4px;
-      padding: 6px 10px;
+      padding: 8px 12px !important;
       max-width: 500px;
       max-height: 300px;
       overflow: hidden;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       font-family: Arial, Helvetica, sans-serif;
       font-size: 14px;
+      line-height: 1.7;
+      color: #333;
+      min-height: auto !important;
       left: ${x + 12}px;
       top: ${y - 10}px;
     `;
     const els = Array.isArray(sourceEls) ? sourceEls : [sourceEls];
     for (const el of els) {
-      container.appendChild(el.cloneNode(true));
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.classList.remove('dragging-source');
+      clone.style.margin = '0';
+      container.appendChild(clone);
     }
     document.body.appendChild(container);
     this.dragState!.floatingEl = container;
@@ -501,12 +508,32 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     };
     collectBlocks(editor as HTMLElement);
 
-    // Find the nearest block boundary
+    // Determine valid drop targets based on what's being dragged
+    const dragEl = this.dragState.lineEl;
+    const dragTag = dragEl?.tagName || '';
+    const isHeadingDrag = dragTag === 'H1' || dragTag === 'H2' || dragTag === 'H3';
+    const dragHeadingLevel = isHeadingDrag ? parseInt(dragTag[1]) : 0;
+
+    // Filter to valid drop targets
+    let validBlocks = blocks;
+    if (isHeadingDrag) {
+      // Headings can only drop before/after sibling headings (same or higher level)
+      validBlocks = blocks.filter(b => {
+        const t = b.el.tagName;
+        if (t === 'H1' || t === 'H2' || t === 'H3') {
+          return parseInt(t[1]) <= dragHeadingLevel;
+        }
+        return false;
+      });
+      // If no valid targets, allow all headings
+      if (validBlocks.length === 0) validBlocks = blocks.filter(b => /^H[123]$/.test(b.el.tagName));
+    }
+
     let bestBlock: typeof blocks[0] | null = null;
-    let insertBefore = true; // true = insert before bestBlock, false = insert after
+    let insertBefore = true;
     let minDist = Infinity;
 
-    for (const block of blocks) {
+    for (const block of validBlocks) {
       const topDist = Math.abs(clientY - block.rect.top);
       if (topDist < minDist) {
         minDist = topDist;
@@ -604,6 +631,21 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.quill.updateContents({
       ops: [...(targetIndex > 0 ? [{ retain: targetIndex }] : []), ...delta.ops!]
     } as any, 'user');
+
+    // Convert list type if dropped into a different list context
+    if (state.lineEl && state.lineEl.tagName === 'LI') {
+      try {
+        const [targetLine] = this.quill.getLine(targetIndex);
+        if (targetLine) {
+          const targetFmt = this.quill.getFormat(targetIndex, 1);
+          const srcFmt = delta.ops?.find((op: any) => op.attributes?.['list'])?.attributes?.['list'];
+          const targetList = (targetFmt as any)['list'] as string | undefined;
+          if (targetList && srcFmt && targetList !== srcFmt) {
+            this.quill.formatLine(targetIndex, srcLen, 'list', targetList, 'user');
+          }
+        }
+      } catch {}
+    }
   }
 
   private completeSourceDrop(state: DragState, event: MouseEvent) {

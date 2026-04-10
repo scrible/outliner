@@ -6,12 +6,14 @@ $accent-light: #FCF4E9;
 $accent-border: #ECB86B;
 $gray-333: #333;
 $gray-555: #555;
-$gray-777: #666;
+$gray-666: #666;
 $gray-999: #999;
+$gray-aaa: #aaa;
 $gray-ccc: #ccc;
 $gray-ddd: #ddd;
 $gray-eee: #eee;
 $gray-f5: #f5f5f5;
+$hover-bg: #f0f7f9;
 
 .outline-shell { display: flex; height: 100vh; overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
 .editor-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -50,40 +52,104 @@ $gray-f5: #f5f5f5;
   position: relative; max-width: 780px; margin: 0 auto; padding: 24px 20px 120px 48px;
 }
 
+// --- Quill editor styles ---
 .quill-host {
   .ql-editor {
-    font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.7; color: $gray-333; padding: 0; min-height: 400px;
-    h1 { font-size: 20px; font-weight: bold; color: $gray-333; margin: 24px 0 8px; padding-bottom: 4px; border-bottom: 2px solid $gray-ddd; &:first-child { margin-top: 0; } }
-    h2 { font-size: 16px; font-weight: bold; color: $primary; margin: 18px 0 4px; }
-    h3 { font-size: 14px; font-weight: bold; color: $gray-555; margin: 12px 0 2px; }
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    color: $gray-333;
+    padding: 0;
+    min-height: 400px;
+
+    // Consistent vertical spacing
+    > * { margin-top: 0; margin-bottom: 0; }
+    > * + * { margin-top: 4px; }
+    > h1 + *, > h2 + *, > h3 + * { margin-top: 6px; }
+    > * + h1 { margin-top: 24px; }
+    > * + h2 { margin-top: 18px; }
+    > * + h3 { margin-top: 12px; }
+
+    h1 {
+      font-size: 20px; font-weight: bold; color: $gray-333;
+      padding-bottom: 4px; border-bottom: 2px solid $gray-ddd;
+      border-radius: 4px; transition: background 150ms;
+      &:first-child { margin-top: 0; }
+    }
+    h2 {
+      font-size: 16px; font-weight: bold; color: $primary;
+      border-radius: 4px; transition: background 150ms;
+    }
+    h3 {
+      font-size: 14px; font-weight: bold; color: $gray-555;
+      border-radius: 4px; transition: background 150ms;
+    }
+
     ol, ul { padding-left: 1.5em; }
-    li { margin: 2px 0; }
-    blockquote { border-left: 3px solid $accent-border; padding: 5px 10px; margin: 6px 0 6px 1.5em; background: $accent-light; color: #78600e; font-size: 13px; font-style: italic; border-radius: 0 4px 4px 0; }
+    li {
+      margin: 2px 0;
+      padding: 1px 4px;
+      border-radius: 4px;
+      transition: background 150ms;
+    }
+
+    // Citation blockquotes — consistent style, aligned with list siblings
+    blockquote {
+      border-left: 3px solid $accent-border;
+      padding: 5px 10px;
+      margin: 4px 0 4px 1.5em;
+      background: $accent-light;
+      color: #78600e;
+      font-size: 13px;
+      font-style: italic;
+      border-radius: 0 4px 4px 0;
+      transition: background 150ms;
+    }
+
     a { color: #337c8e; }
-    .ql-indent-1 { padding-left: 2em; } .ql-indent-2 { padding-left: 4em; } .ql-indent-3 { padding-left: 6em; }
+
+    .ql-indent-1 { padding-left: 2em; }
+    .ql-indent-2 { padding-left: 4em; }
+    .ql-indent-3 { padding-left: 6em; }
+
+    // Hover highlights — shows what you'd drag
+    h1:hover, h2:hover, h3:hover { background: $hover-bg; }
+    li:hover { background: $hover-bg; }
+    blockquote:hover { background: #fef6e6; }
+
+    // Dimmed during drag
+    .dragging-source { opacity: 0.25; }
   }
+
   .ql-tooltip { border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
   .ql-bubble .ql-toolbar { background: #444; border-radius: 4px; }
 }
 
+// --- Drag handles ---
 .line-drag-handle {
   position: absolute; left: 12px; width: 24px; height: 24px;
   display: flex; align-items: center; justify-content: center;
-  cursor: grab; color: $gray-ccc; border-radius: 4px;
+  cursor: grab; color: $gray-aaa; border-radius: 4px;
   opacity: 0; transition: opacity 150ms, color 150ms; z-index: 2;
-  &:hover { opacity: 1 !important; color: $gray-777; background: $gray-eee; }
+  &:hover { opacity: 1 !important; color: $primary; background: $primary-light; }
   &.line-selected { opacity: 1 !important; color: $primary; background: $primary-light; }
   .material-icons { font-size: 18px; }
 }
-.editor-wrapper:hover .line-drag-handle { opacity: 0.4; }
-.ql-editor .dragging-source { opacity: 0.3; }
+.editor-wrapper:hover .line-drag-handle { opacity: 0.6; }
 
-.drop-indicator-line {
-  position: absolute; left: 0; right: 0; height: 2px;
-  background: $primary; z-index: 9999; pointer-events: none;
-  border-radius: 1px; box-shadow: 0 0 4px rgba(29,110,130,0.4);
+// --- Drop placeholder ---
+.drop-placeholder {
+  position: absolute;
+  left: 48px; right: 20px;
+  height: 32px;
+  border: 2px dashed $gray-ccc;
+  border-radius: 4px;
+  background: $gray-f5;
+  pointer-events: none;
+  z-index: 5;
 }
 
+// --- Source panel ---
 .preview-panel {
   width: 380px; border-left: 1px solid $gray-ddd; background: white;
   display: flex; flex-direction: column; flex-shrink: 0;
@@ -94,7 +160,7 @@ $gray-f5: #f5f5f5;
   .preview-title { font-size: 14px; font-weight: bold; color: $gray-333; }
 }
 
-.source-hint { font-size: 12px; color: $gray-777; padding: 12px 16px 8px; line-height: 1.5; }
+.source-hint { font-size: 12px; color: $gray-666; padding: 12px 16px 8px; line-height: 1.5; }
 .source-list { flex: 1; overflow-y: auto; padding: 4px 12px; }
 
 .source-card {
@@ -106,7 +172,7 @@ $gray-f5: #f5f5f5;
   .source-favicon { width: 24px; height: 24px; border-radius: 4px; flex-shrink: 0; background: $gray-f5; }
   .source-info { flex: 1; min-width: 0; }
   .source-name { font-size: 13px; font-weight: bold; color: $gray-333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .source-meta { font-size: 11px; color: $gray-777; margin-top: 1px; }
+  .source-meta { font-size: 11px; color: $gray-666; margin-top: 1px; }
 }
 
 .cite-btn {
@@ -123,6 +189,6 @@ $gray-f5: #f5f5f5;
   .source-detail-title { font-size: 15px; font-weight: bold;
     a { color: $primary; text-decoration: none; &:hover { text-decoration: underline; } }
   }
-  .source-detail-meta { font-size: 12px; color: $gray-777; }
+  .source-detail-meta { font-size: 12px; color: $gray-666; }
   .source-detail-summary { font-size: 13px; font-style: italic; color: $gray-555; line-height: 1.6; }
 }
