@@ -51,7 +51,8 @@
                    role="button" [attr.aria-label]="'Source: ' + source.title">
                 <img class="source-favicon"
                      [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
-                     alt="" width="24" height="24" aria-hidden="true">
+                     alt="" width="24" height="24" aria-hidden="true"
+                     style="pointer-events:none">
                 <div class="source-info">
                   <div class="source-name">{{ source.title }}</div>
                   <div class="source-meta">{{ source.author }} &middot; {{ source.date }}</div>
@@ -83,5 +84,13 @@
         </div>
       }
     </aside>
+  }
+
+  <!-- Export toast -->
+  @if (exportToastVisible) {
+    <div class="export-toast" role="alert">
+      <span class="material-icons" aria-hidden="true">content_paste</span>
+      Outline copied to clipboard. Press <kbd>Cmd+V</kbd> (or <kbd>Ctrl+V</kbd>) to paste into the new Google Doc.
+    </div>
   }
 </div>

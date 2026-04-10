@@ -147,11 +147,21 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       if (line) insertIndex = this.quill.getIndex(line as any) + line.length();
     } catch {}
 
-    this.quill.insertText(insertIndex, '\n', 'user');
-    this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
-    this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
-    this.quill.setSelection(insertIndex + 2 + citation.length, 0);
+    this.insertCitationText(citation, insertIndex);
     this.quill.focus();
+  }
+
+  /** Always inserts a citation with consistent gold blockquote formatting */
+  private insertCitationText(citation: string, atIndex: number) {
+    // Insert: \n + citation text + \n
+    this.quill.insertText(atIndex, '\n', 'user');
+    this.quill.insertText(atIndex + 1, citation + '\n', 'user');
+    // Format only the citation line as blockquote+italic (not the trailing newline)
+    this.quill.formatLine(atIndex + 1, 1, { blockquote: true }, 'user');
+    this.quill.formatText(atIndex + 1, citation.length, { italic: true }, 'user');
+    // Remove blockquote from the line after the citation
+    this.quill.formatLine(atIndex + 2 + citation.length, 1, { blockquote: false }, 'user');
+    this.quill.setSelection(atIndex + 2 + citation.length, 0);
   }
 
   formatMLA(source: any): string {
@@ -302,13 +312,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         offsetY: 0,
       };
 
-      const tempDiv = document.createElement('div');
+      const tempDiv = document.createElement('blockquote');
       tempDiv.textContent = this.formatMLA(src);
-      tempDiv.style.cssText = 'font-size:12px;color:#78600e;background:#fffbf0;border-left:3px solid #d4a843;padding:4px 8px;max-width:300px;border-radius:4px;';
-      document.body.appendChild(tempDiv);
-
-      this.dragState.floatingEl = this.createFloatingEl(tempDiv, e.clientX, e.clientY);
-      document.body.removeChild(tempDiv);
+      this.createFloatingPreview(tempDiv, e.clientX, e.clientY);
 
       this.createDropIndicator();
       this.attachGlobalListeners();
@@ -525,7 +531,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     // Filter to valid drop targets
     let validBlocks = blocks;
     if (isHeadingDrag) {
-      // Headings can only drop before/after sibling headings (same level)
+      // Headings can only drop before/after sibling headings at same level.
+      // Only use the TOP edge of each sibling heading as a drop target
+      // (no bottom edges — prevents inserting between a heading and its content).
       validBlocks = blocks.filter(b => {
         const t = b.el.tagName;
         return (t === 'H1' || t === 'H2' || t === 'H3') && parseInt(t[1]) <= dragHeadingLevel;
@@ -540,18 +548,49 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     let insertBefore = true;
     let minDist = Infinity;
 
-    for (const block of validBlocks) {
-      const topDist = Math.abs(clientY - block.rect.top);
-      if (topDist < minDist) {
-        minDist = topDist;
-        bestBlock = block;
-        insertBefore = true;
+    if (isHeadingDrag) {
+      // For headings: only snap to the TOP edge of each heading (= section start)
+      // and the BOTTOM edge of the last block (= end of document)
+      for (const block of validBlocks) {
+        const topDist = Math.abs(clientY - block.rect.top);
+        if (topDist < minDist) {
+          minDist = topDist;
+          bestBlock = block;
+          insertBefore = true;
+        }
       }
-      const bottomDist = Math.abs(clientY - block.rect.bottom);
-      if (bottomDist < minDist) {
-        minDist = bottomDist;
-        bestBlock = block;
-        insertBefore = false;
+      // Also check: drop after the last valid heading's section
+      if (validBlocks.length > 0) {
+        const lastHeading = validBlocks[validBlocks.length - 1];
+        const lastSection = this.getHeadingSectionRange(lastHeading.quillIdx);
+        if (lastSection) {
+          // Find the last block in the document to get its bottom edge
+          const lastBlock = blocks[blocks.length - 1];
+          if (lastBlock) {
+            const bottomDist = Math.abs(clientY - lastBlock.rect.bottom);
+            if (bottomDist < minDist) {
+              minDist = bottomDist;
+              bestBlock = lastBlock;
+              insertBefore = false;
+            }
+          }
+        }
+      }
+    } else {
+      // Standard: snap to nearest top or bottom edge
+      for (const block of validBlocks) {
+        const topDist = Math.abs(clientY - block.rect.top);
+        if (topDist < minDist) {
+          minDist = topDist;
+          bestBlock = block;
+          insertBefore = true;
+        }
+        const bottomDist = Math.abs(clientY - block.rect.bottom);
+        if (bottomDist < minDist) {
+          minDist = bottomDist;
+          bestBlock = block;
+          insertBefore = false;
+        }
       }
     }
 
@@ -569,14 +608,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         // Position placeholder above bestBlock, displace bestBlock down
         const rect = bestBlock.el.getBoundingClientRect();
         this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect.top}px`;
-        bestBlock.el.style.marginTop = '40px';
+        bestBlock.el.style.marginTop = '44px';
         this.displacedEl = bestBlock.el;
         this.dragState.dropBeforeIndex = bestBlock.quillIdx;
       } else if (targetEl) {
         // Position placeholder above the next element
         const rect = targetEl.getBoundingClientRect();
         this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect.top}px`;
-        targetEl.style.marginTop = '40px';
+        targetEl.style.marginTop = '44px';
         this.displacedEl = targetEl;
         this.dragState.dropBeforeIndex = bestBlock.quillIdx + bestBlock.quillLen;
       } else {
@@ -604,7 +643,10 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     }
 
     this.cleanupDrag();
-    requestAnimationFrame(() => this.updateLineHandles());
+    requestAnimationFrame(() => {
+      this.formatOutline();
+      this.updateLineHandles();
+    });
   }
 
   private completLineDrop(state: DragState, event: MouseEvent) {
@@ -657,36 +699,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   private completeSourceDrop(state: DragState, event: MouseEvent) {
     if (!state.source) return;
-
     const citation = this.formatMLA(state.source);
-
-    // Find insert position from drop coordinates
-    let insertIndex = this.quill.getLength() - 1;
-
-    if (state.dropBeforeIndex != null) {
-      insertIndex = state.dropBeforeIndex;
-    } else {
-      // Fallback: use caretRangeFromPoint
-      try {
-        const caretRange = (document as any).caretRangeFromPoint(event.clientX, event.clientY);
-        if (caretRange) {
-          const blot = this.quill.scroll.find(caretRange.startContainer, true);
-          if (blot) {
-            const blotIndex = this.quill.getIndex(blot as any);
-            const [line] = this.quill.getLine(blotIndex);
-            if (line) {
-              insertIndex = this.quill.getIndex(line as any) + line.length();
-            }
-          }
-        }
-      } catch {}
-    }
-
-    // Insert citation as blockquote
-    this.quill.insertText(insertIndex, '\n', 'user');
-    this.quill.insertText(insertIndex + 1, citation, { blockquote: true, italic: true }, 'user');
-    this.quill.insertText(insertIndex + 1 + citation.length, '\n', 'user');
-    this.quill.setSelection(insertIndex + 2 + citation.length, 0);
+    const insertIndex = state.dropBeforeIndex ?? this.quill.getLength() - 1;
+    this.insertCitationText(citation, insertIndex);
   }
 
   private cleanupDrag() {
@@ -714,6 +729,89 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       document.removeEventListener('mouseup', this.boundMouseUp, true);
       this.boundMouseUp = null;
     }
+  }
+
+  // ──────────────────────────────────────
+  // Post-drop formatter — enforce clean outline structure
+  // ──────────────────────────────────────
+  private formatOutline() {
+    const q = this.quill;
+    const len = q.getLength();
+    let pos = 0;
+
+    while (pos < len) {
+      const [line] = q.getLine(pos);
+      if (!line) break;
+      const lineIdx = q.getIndex(line as any);
+      const lineLen = (line as any).length();
+      const text = q.getText(lineIdx, lineLen);
+      const fmt = q.getFormat(lineIdx, lineLen);
+
+      // 1. Remove empty lines (text is just '\n' with no content) unless it's the last line
+      if (text.trim() === '' && !fmt['header'] && !fmt['list'] && !fmt['blockquote'] && lineIdx + lineLen < len) {
+        q.deleteText(lineIdx, lineLen, 'silent');
+        continue; // re-check same position
+      }
+
+      // 2. Enforce single-step indentation (no jumping from indent 0 to indent 2+)
+      const indent = (fmt['indent'] as number) || 0;
+      if (indent > 1 && pos > 0) {
+        // Check previous line's indent
+        const prevPos = lineIdx - 1;
+        if (prevPos >= 0) {
+          const prevFmt = q.getFormat(prevPos, 1);
+          const prevIndent = ((prevFmt as any)['indent'] as number) || 0;
+          if (indent > prevIndent + 1) {
+            q.formatLine(lineIdx, lineLen, 'indent', prevIndent + 1, 'silent');
+          }
+        }
+      }
+
+      // 3. Ensure blockquotes keep their formatting (re-apply if stripped)
+      // (handled by insertCitationText — no action needed here)
+
+      pos = lineIdx + lineLen;
+    }
+
+    // 4. Additional: ensure no trailing empty lines beyond one
+    const totalLen = q.getLength();
+    if (totalLen > 2) {
+      const lastText = q.getText(totalLen - 2, 2);
+      if (lastText === '\n\n') {
+        q.deleteText(totalLen - 1, 1, 'silent');
+      }
+    }
+  }
+
+  // ──────────────────────────────────────
+  // Export abstraction — swappable for Google Drive API later
+  // ──────────────────────────────────────
+  private exportOutline(html: string, plainText: string) {
+    // Strategy: clipboard + new Google Doc (option 3)
+    // TODO: Replace with Google Drive API upload (option 1)
+    navigator.clipboard.write([
+      new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([plainText], { type: 'text/plain' }),
+      })
+    ]).catch(() => {});
+
+    // Show toast notification
+    this.showExportToast();
+
+    setTimeout(() => {
+      window.open('https://docs.google.com/document/create', '_blank');
+    }, 300);
+  }
+
+  exportToastVisible = false;
+  private showExportToast() {
+    this.exportToastVisible = true;
+    this.cdr.detectChanges();
+    setTimeout(() => {
+      this.exportToastVisible = false;
+      this.cdr.detectChanges();
+    }, 6000);
   }
 
   // ──────────────────────────────────────
@@ -765,8 +863,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    // Escape: deselect
+    // Escape: cancel drag if active, otherwise deselect
     if (event.key === 'Escape') {
+      if (this.dragState) {
+        event.preventDefault();
+        this.cleanupDrag();
+        requestAnimationFrame(() => this.updateLineHandles());
+        return;
+      }
       this.selectedLineIndex = null;
       this.cdr.detectChanges();
     }
@@ -874,31 +978,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // Export to Google Docs (unchanged)
   // ──────────────────────────────────────
   exportToGoogleDoc() {
-    const htmlContent = this.quill.root.innerHTML;
-    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Outline</title></head><body>${htmlContent}</body></html>`;
-
-    // Create a downloadable HTML file, then open Google Docs import
-    const blob = new Blob([fullHtml], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-
-    // Download the HTML file for the user
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'outline.html';
-    a.click();
-
-    // Also copy rich content to clipboard for easy paste
-    navigator.clipboard.write([
-      new ClipboardItem({
-        'text/html': new Blob([htmlContent], { type: 'text/html' }),
-        'text/plain': new Blob([this.quill.getText()], { type: 'text/plain' }),
-      })
-    ]).catch(() => {});
-
-    // Open Google Docs with instructions
-    setTimeout(() => {
-      window.open('https://docs.google.com/document/create', '_blank');
-    }, 500);
+    this.exportOutline(this.quill.root.innerHTML, this.quill.getText());
   }
 
   trackByIndex(index: number) { return index; }

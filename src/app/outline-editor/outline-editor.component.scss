@@ -141,12 +141,13 @@ $hover-bg: #f0f7f9;
 .drop-placeholder {
   position: absolute;
   left: 48px; right: 20px;
-  height: 32px;
+  height: 28px;
   border: 2px dashed $gray-ccc;
   border-radius: 4px;
   background: $gray-f5;
   pointer-events: none;
   z-index: 5;
+  margin-bottom: 6px;
 }
 
 // --- Source panel ---
@@ -191,4 +192,35 @@ $hover-bg: #f0f7f9;
   }
   .source-detail-meta { font-size: 12px; color: $gray-666; }
   .source-detail-summary { font-size: 13px; font-style: italic; color: $gray-555; line-height: 1.6; }
+}
+
+// --- Export toast ---
+.export-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: $gray-333;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: toast-in 0.3s ease;
+  .material-icons { font-size: 18px; }
+  kbd {
+    background: rgba(255,255,255,0.15);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+}
+@keyframes toast-in {
+  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
