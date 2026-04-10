@@ -193,15 +193,24 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   /** Always inserts a citation with consistent gold blockquote formatting */
   private insertCitationText(citation: string, atIndex: number) {
-    // Insert: \n + citation text + \n
-    this.quill.insertText(atIndex, '\n', 'user');
-    this.quill.insertText(atIndex + 1, citation + '\n', 'user');
-    // Format only the citation line as blockquote+italic (not the trailing newline)
-    this.quill.formatLine(atIndex + 1, 1, { blockquote: true }, 'user');
-    this.quill.formatText(atIndex + 1, citation.length, { italic: true }, 'user');
-    // Remove blockquote from the line after the citation
-    this.quill.formatLine(atIndex + 2 + citation.length, 1, { blockquote: false }, 'user');
-    this.quill.setSelection(atIndex + 2 + citation.length, 0);
+    // Check if we need a leading newline (avoid double-newlines)
+    let offset = 0;
+    if (atIndex > 0) {
+      const prevChar = this.quill.getText(atIndex - 1, 1);
+      if (prevChar !== '\n') {
+        this.quill.insertText(atIndex, '\n', 'user');
+        offset = 1;
+      }
+    }
+    const insertAt = atIndex + offset;
+    this.quill.insertText(insertAt, citation + '\n', 'user');
+    this.quill.formatLine(insertAt, 1, { blockquote: true }, 'user');
+    this.quill.formatText(insertAt, citation.length, { italic: true }, 'user');
+    // Ensure the line AFTER the citation is not a blockquote
+    this.quill.formatLine(insertAt + citation.length + 1, 1, { blockquote: false }, 'user');
+    this.quill.setSelection(insertAt + citation.length + 1, 0);
+    // Run formatter to clean up
+    requestAnimationFrame(() => this.formatOutline());
   }
 
   formatMLA(source: any): string {
@@ -384,23 +393,23 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // ──────────────────────────────────────
   onSourceMouseDown(event: MouseEvent, source: any) {
     if (event.button !== 0) return;
-    event.preventDefault(); // Prevent text selection
+    event.preventDefault();
 
     this.pendingSourceDrag = { source, startX: event.clientX, startY: event.clientY };
     this.sourceJustDragged = false;
+    const startTime = Date.now();
 
     const onMove = (e: MouseEvent) => {
-      e.preventDefault(); // Prevent text selection during drag
+      e.preventDefault();
       if (!this.pendingSourceDrag) return;
       const dx = e.clientX - this.pendingSourceDrag.startX;
       const dy = e.clientY - this.pendingSourceDrag.startY;
-      if (Math.sqrt(dx * dx + dy * dy) < 5) return;
+      if (Math.sqrt(dx * dx + dy * dy) < 8) return;
 
       const src = this.pendingSourceDrag.source;
       this.pendingSourceDrag = null;
       this.sourceJustDragged = true;
 
-      // Prevent text selection globally during drag
       document.body.style.userSelect = 'none';
       document.body.style.webkitUserSelect = 'none';
 
@@ -418,9 +427,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     };
 
     const onUp = () => {
+      const wasDrag = this.sourceJustDragged;
       this.pendingSourceDrag = null;
       document.removeEventListener('mousemove', onMove, true);
       document.removeEventListener('mouseup', onUp, true);
+      // Short click (no drag) → open detail view
+      if (!wasDrag && Date.now() - startTime < 300) {
+        this.zone.run(() => this.openSourceDetail(source));
+      }
     };
 
     document.addEventListener('mousemove', onMove, true);
@@ -505,13 +519,15 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       clone.classList.remove('dragging-source');
       clone.classList.remove('hover-highlight');
       clone.style.margin = '0';
-      // Force headings in the preview to match body text style
+      // Copy computed styles for headings so they match the editor
       if (/^H[123]$/.test(clone.tagName)) {
-        clone.style.fontSize = '14px';
-        clone.style.fontWeight = 'bold';
-        clone.style.color = '#333';
+        const computed = window.getComputedStyle(el);
+        clone.style.fontSize = computed.fontSize;
+        clone.style.fontWeight = computed.fontWeight;
+        clone.style.color = computed.color;
         clone.style.borderBottom = 'none';
         clone.style.paddingBottom = '0';
+        clone.style.marginTop = '0';
       }
       container.appendChild(clone);
     }

@@ -13,7 +13,8 @@ $gray-ccc: #ccc;
 $gray-ddd: #ddd;
 $gray-eee: #eee;
 $gray-f5: #f5f5f5;
-$hover-bg: #f0f7f9;
+$hover-bg: #e4f0f3;
+$panel-width: 380px;
 
 .outline-shell { display: flex; height: 100vh; overflow: hidden; font-family: Arial, Helvetica, sans-serif; }
 .editor-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -48,8 +49,18 @@ $hover-bg: #f0f7f9;
 
 .editor-scroll { flex: 1; overflow-y: auto; background: $gray-f5; }
 
+// Editor is always offset by panel width so opening the panel doesn't shift content
 .editor-wrapper {
-  position: relative; max-width: 780px; margin: 0 auto; padding: 24px 20px 120px 48px;
+  position: relative;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 20px 120px 48px;
+  // Reserve panel width on the right so content doesn't shift
+  margin-right: $panel-width;
+}
+// When panel is open, the aside takes the reserved space
+.outline-shell.preview-open .editor-wrapper {
+  margin-right: 0;
 }
 
 // --- Quill editor styles ---
@@ -72,28 +83,29 @@ $hover-bg: #f0f7f9;
 
     h1 {
       font-size: 20px; font-weight: bold; color: $gray-333;
-      padding-bottom: 4px; border-bottom: 2px solid $gray-ddd;
+      padding: 4px 6px; padding-bottom: 4px; border-bottom: 2px solid $gray-ddd;
       border-radius: 4px; transition: background 150ms;
       &:first-child { margin-top: 0; }
     }
     h2 {
       font-size: 16px; font-weight: bold; color: $primary;
+      padding: 3px 6px;
       border-radius: 4px; transition: background 150ms;
     }
     h3 {
       font-size: 14px; font-weight: bold; color: $gray-555;
+      padding: 2px 6px;
       border-radius: 4px; transition: background 150ms;
     }
 
     ol, ul { padding-left: 1.5em; }
     li {
       margin: 2px 0;
-      padding: 1px 4px;
+      padding: 2px 6px;
       border-radius: 4px;
       transition: background 150ms;
     }
 
-    // Citation blockquotes — consistent style, aligned with list siblings
     blockquote {
       border-left: 3px solid $accent-border;
       padding: 5px 10px;
@@ -112,11 +124,15 @@ $hover-bg: #f0f7f9;
     .ql-indent-2 { padding-left: 4em; }
     .ql-indent-3 { padding-left: 6em; }
 
-    // Hover highlight applied by JS — shows what you'd drag
-    .hover-highlight { background: $hover-bg !important; border-radius: 4px; }
-    blockquote.hover-highlight { background: #fef6e6 !important; }
+    // Hover highlight — fills the container, stronger contrast
+    .hover-highlight {
+      background: $hover-bg !important;
+      border-radius: 4px;
+      outline: 1px solid darken($hover-bg, 8%);
+      outline-offset: -1px;
+    }
+    blockquote.hover-highlight { background: #faecd4 !important; outline-color: #eed8a8; }
 
-    // Dimmed during drag
     .dragging-source { opacity: 0.25; }
   }
 
@@ -124,7 +140,7 @@ $hover-bg: #f0f7f9;
   .ql-bubble .ql-toolbar { background: #444; border-radius: 4px; }
 }
 
-// --- Drag handles ---
+// --- Drag handle ---
 .line-drag-handle {
   position: absolute; left: 12px; width: 24px; height: 24px;
   display: flex; align-items: center; justify-content: center;
@@ -146,12 +162,11 @@ $hover-bg: #f0f7f9;
   background: $gray-f5;
   pointer-events: none;
   z-index: 5;
-  margin-bottom: 6px;
 }
 
 // --- Source panel ---
 .preview-panel {
-  width: 380px; border-left: 1px solid $gray-ddd; background: white;
+  width: $panel-width; border-left: 1px solid $gray-ddd; background: white;
   display: flex; flex-direction: column; flex-shrink: 0;
 }
 .preview-header {
