@@ -18,12 +18,10 @@
     </header>
     <div class="editor-scroll" tabindex="0" role="region" aria-label="Outline content">
       <div class="editor-wrapper">
-        @for (h of lineHandles; track h.index) {
-          <div class="line-drag-handle"
-               [style.top.px]="h.top"
-               [class.line-selected]="isLineSelected(h.index)"
-               (mousedown)="onLineHandleMouseDown($event, h)"
-               (click)="onLineClick($event, h)"
+        @if (hoveredHandle && !dragState) {
+          <div class="line-drag-handle visible"
+               [style.top.px]="hoveredHandle.top"
+               (mousedown)="onLineHandleMouseDown($event, hoveredHandle)"
                title="Drag to move" role="button" aria-label="Drag to reorder">
             <span class="material-icons" aria-hidden="true">drag_indicator</span>
           </div>
@@ -42,43 +40,42 @@
 
       @if (!selectedSource) {
         <div class="source-list">
-          <p class="source-hint">Drag a source onto the outline, or click <strong>Cite</strong> to insert. Click a source for details.</p>
+          <p class="source-hint">Drag any source onto the outline to insert a citation. Click <span class="material-icons" style="font-size:14px;vertical-align:middle">info_outline</span> for details.</p>
           @for (source of sampleSources; track source.url) {
-            <div class="source-card">
-              <div class="source-card-main"
-                   (mousedown)="onSourceMouseDown($event, source)"
-                   (click)="onSourceClick($event, source)"
-                   role="button" [attr.aria-label]="'Source: ' + source.title">
-                <img class="source-favicon"
-                     [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
-                     alt="" width="24" height="24" aria-hidden="true"
-                     style="pointer-events:none">
-                <div class="source-info">
-                  <div class="source-name">{{ source.title }}</div>
-                  <div class="source-meta">{{ source.author }} &middot; {{ source.date }}</div>
-                </div>
+            <div class="source-card"
+                 (mousedown)="onSourceMouseDown($event, source)"
+                 role="group" [attr.aria-label]="'Source: ' + source.title + '. Drag to cite.'"
+                 style="cursor:grab">
+              <img class="source-favicon"
+                   [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
+                   alt="" width="24" height="24" aria-hidden="true">
+              <div class="source-info">
+                <div class="source-name">{{ source.title }}</div>
+                <div class="source-meta">{{ source.author }} &middot; {{ source.date }}</div>
               </div>
-              <button class="cite-btn" (click)="insertCitation(source); $event.stopPropagation()"
-                      [attr.aria-label]="'Insert citation for ' + source.title">Cite</button>
+              <button class="source-info-btn" (click)="openSourceDetail(source); $event.stopPropagation()" (mousedown)="$event.stopPropagation()"
+                      [attr.aria-label]="'Details for ' + source.title">
+                <span class="material-icons" aria-hidden="true">info_outline</span>
+              </button>
             </div>
           }
         </div>
       } @else {
-        <div class="source-detail">
-          <button class="btn btn-sm" (click)="goBackToSources()" aria-label="Back to sources">&larr; All Sources</button>
+        <div class="source-detail" (mousedown)="onSourceMouseDown($event, selectedSource)" style="cursor:grab">
+          <button class="btn btn-sm" (click)="goBackToSources(); $event.stopPropagation()" (mousedown)="$event.stopPropagation()" aria-label="Back to sources">&larr; All Sources</button>
           <img class="source-detail-thumb"
                [src]="'https://api.microlink.io/?url=' + selectedSource.url + '&screenshot=true&meta=false&embed=screenshot.url'"
                [alt]="selectedSource.title"
-               onerror="this.src='https://www.google.com/s2/favicons?domain=' + this.closest('.source-detail').querySelector('.source-detail-title a')?.href + '&sz=128'">
+               onerror="this.style.display='none'">
           <h3 class="source-detail-title">
-            <a [href]="selectedSource.url" target="_blank" rel="noopener noreferrer">
+            <a [href]="selectedSource.url" target="_blank" rel="noopener noreferrer" (mousedown)="$event.stopPropagation()">
               {{ selectedSource.title }}
               <span class="material-icons" aria-hidden="true" style="font-size:14px;vertical-align:middle">open_in_new</span>
             </a>
           </h3>
           <div class="source-detail-meta">{{ selectedSource.author }} &middot; {{ selectedSource.date }}</div>
           <p class="source-detail-summary">{{ selectedSource.summary }}</p>
-          <button class="btn btn-primary btn-full" (click)="insertCitation(selectedSource)">
+          <button class="btn btn-primary btn-full" (click)="insertCitation(selectedSource); $event.stopPropagation()" (mousedown)="$event.stopPropagation()">
             <span class="material-icons" aria-hidden="true">format_quote</span> Insert Citation
           </button>
         </div>

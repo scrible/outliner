@@ -58,10 +58,13 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   // Keyboard navigation
   selectedLineIndex: number | null = null;
-  hoveredLineIndex: number | null = null;
+
+  // Single hover handle (replaces per-line handles)
+  hoveredHandle: { top: number; index: number; length: number; el: HTMLElement } | null = null;
+  private lastHoveredEl: HTMLElement | null = null;
 
   // Drag state
-  private dragState: DragState | null = null;
+  dragState: DragState | null = null;
 
   // Source drag: pending state before threshold is met
   private pendingSourceDrag: { source: any; startX: number; startY: number } | null = null;
@@ -88,8 +91,11 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         ],
         keyboard: {
           bindings: {
-            tab: { key: 'Tab', handler: () => { this.quill.format('indent', '+1'); return false; } },
-            shiftTab: { key: 'Tab', shiftKey: true, handler: () => { this.quill.format('indent', '-1'); return false; } },
+            // Override ALL tab behavior — always indent/outdent, never insert whitespace
+            'tab': { key: 'Tab', shiftKey: false, handler: () => { this.quill.format('indent', '+1'); return false; } },
+            'shift-tab': { key: 'Tab', shiftKey: true, handler: () => { this.quill.format('indent', '-1'); return false; } },
+            // Also suppress default tab in lists (Quill binds it separately)
+            'list autofill': { key: 'Tab', collapsed: true, format: ['list'], handler: () => { this.quill.format('indent', '+1'); return false; } },
           }
         },
         history: { delay: 500, maxStack: 100, userOnly: true },
@@ -102,6 +108,28 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       editorEl.addEventListener('dragover', (e: DragEvent) => { e.preventDefault(); e.stopImmediatePropagation(); }, true);
       editorEl.addEventListener('drop', (e: DragEvent) => { e.preventDefault(); e.stopImmediatePropagation(); }, true);
       editorEl.addEventListener('dragstart', (e: DragEvent) => { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+    }
+
+    // Listen for Escape during drag (HostListener doesn't fire when Quill has focus)
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && this.dragState) {
+        e.preventDefault();
+        this.cleanupDrag();
+        requestAnimationFrame(() => this.updateLineHandles());
+      }
+    });
+
+    // Track mouse position for single hover handle
+    const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
+    if (wrapper) {
+      wrapper.addEventListener('mousemove', (e: Event) => {
+        if (!this.dragState) this.updateHoverHandle(e as MouseEvent);
+      });
+      wrapper.addEventListener('mouseleave', () => {
+        this.hoveredHandle = null;
+        this.clearHoverHighlight();
+        this.cdr.detectChanges();
+      });
     }
 
     this.loadDemoContent();
@@ -234,6 +262,63 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     }
     this.lineHandles = handles;
     this.cdr.detectChanges();
+  }
+
+  // ──────────────────────────────────────
+  // Single hover handle — follows mouse, highlights target element + children
+  // ──────────────────────────────────────
+  private updateHoverHandle(event: MouseEvent) {
+    const clientY = event.clientY;
+    const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
+    if (!wrapper) return;
+    const wrapperRect = wrapper.getBoundingClientRect();
+
+    // Find the line handle closest to the mouse Y
+    let best: typeof this.lineHandles[0] | null = null;
+    let bestDist = Infinity;
+    for (const h of this.lineHandles) {
+      const elRect = h.el.getBoundingClientRect();
+      const centerY = elRect.top + elRect.height / 2;
+      const dist = Math.abs(clientY - centerY);
+      if (dist < bestDist) { bestDist = dist; best = h; }
+    }
+
+    if (best && bestDist < 80) {
+      const tag = best.el.tagName;
+      const isHeading = tag === 'H1' || tag === 'H2' || tag === 'H3';
+      let sectionEls: HTMLElement[] = [];
+
+      if (isHeading) {
+        // Highlight heading + all section children
+        const range = this.getHeadingSectionRange(best.index);
+        if (range) sectionEls = this.getElementsInRange(range.start, range.length);
+        else sectionEls = [best.el];
+      } else {
+        sectionEls = [best.el];
+      }
+
+      // Update highlight
+      this.clearHoverHighlight();
+      sectionEls.forEach(el => el.classList.add('hover-highlight'));
+      this.lastHoveredEl = best.el;
+
+      this.hoveredHandle = {
+        top: best.el.getBoundingClientRect().top - wrapperRect.top,
+        index: best.index,
+        length: best.length,
+        el: best.el,
+      };
+      this.cdr.detectChanges();
+    } else if (this.hoveredHandle) {
+      this.hoveredHandle = null;
+      this.clearHoverHighlight();
+      this.cdr.detectChanges();
+    }
+  }
+
+  private clearHoverHighlight() {
+    document.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
+    this.lastHoveredEl = null;
   }
 
   // ──────────────────────────────────────
@@ -600,28 +685,32 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       this.displacedEl = null;
     }
 
+    const placeholderH = 28; // matches CSS .drop-placeholder height
+    const placeholderGap = 14;
+    const displacePx = `${placeholderH + placeholderGap}px`;
+
     if (bestBlock) {
-      const targetEl = insertBefore ? bestBlock.el : (bestBlock.el.nextElementSibling as HTMLElement);
-      const wrapperRect = this.editorContainer.nativeElement.closest('.editor-wrapper')!.getBoundingClientRect();
+      const displacedTarget = insertBefore ? bestBlock.el : (bestBlock.el.nextElementSibling as HTMLElement);
+      const wrapperRect2 = this.editorContainer.nativeElement.closest('.editor-wrapper')!.getBoundingClientRect();
 
       if (insertBefore) {
-        // Position placeholder above bestBlock, displace bestBlock down
-        const rect = bestBlock.el.getBoundingClientRect();
-        this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect.top}px`;
-        bestBlock.el.style.marginTop = '44px';
+        // Displace the target down first, then position placeholder in the gap
+        bestBlock.el.style.marginTop = displacePx;
         this.displacedEl = bestBlock.el;
+        // Recalculate position after displacement
+        const rect = bestBlock.el.getBoundingClientRect();
+        this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect2.top - placeholderH - placeholderGap / 2}px`;
         this.dragState.dropBeforeIndex = bestBlock.quillIdx;
-      } else if (targetEl) {
-        // Position placeholder above the next element
-        const rect = targetEl.getBoundingClientRect();
-        this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect.top}px`;
-        targetEl.style.marginTop = '44px';
-        this.displacedEl = targetEl;
+      } else if (displacedTarget) {
+        displacedTarget.style.marginTop = displacePx;
+        this.displacedEl = displacedTarget;
+        const rect = displacedTarget.getBoundingClientRect();
+        this.dragState.indicatorEl.style.top = `${rect.top - wrapperRect2.top - placeholderH - placeholderGap / 2}px`;
         this.dragState.dropBeforeIndex = bestBlock.quillIdx + bestBlock.quillLen;
       } else {
-        // At the end — position after last block
+        // At the end
         const rect = bestBlock.el.getBoundingClientRect();
-        this.dragState.indicatorEl.style.top = `${rect.bottom - wrapperRect.top + 4}px`;
+        this.dragState.indicatorEl.style.top = `${rect.bottom - wrapperRect2.top + 4}px`;
         this.dragState.dropBeforeIndex = bestBlock.quillIdx + bestBlock.quillLen;
       }
       this.dragState.indicatorEl.style.display = 'block';
@@ -747,8 +836,10 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       const text = q.getText(lineIdx, lineLen);
       const fmt = q.getFormat(lineIdx, lineLen);
 
-      // 1. Remove empty lines (text is just '\n' with no content) unless it's the last line
-      if (text.trim() === '' && !fmt['header'] && !fmt['list'] && !fmt['blockquote'] && lineIdx + lineLen < len) {
+      // 1. Remove empty lines — including empty list items and empty blockquotes
+      //    (but not headings, which serve as section markers even when empty)
+      const textContent = text.replace(/\n/g, '').trim();
+      if (textContent === '' && !fmt['header'] && lineIdx + lineLen < len) {
         q.deleteText(lineIdx, lineLen, 'silent');
         continue; // re-check same position
       }
@@ -767,13 +858,26 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         }
       }
 
-      // 3. Ensure blockquotes keep their formatting (re-apply if stripped)
-      // (handled by insertCitationText — no action needed here)
+      // 3. Auto-convert list type to match neighboring list at same indent
+      const listType = (fmt as any)['list'] as string | undefined;
+      if (listType && lineIdx > 0) {
+        const prevFmt = q.getFormat(lineIdx - 1, 1);
+        const prevList = (prevFmt as any)['list'] as string | undefined;
+        const prevIndent = ((prevFmt as any)['indent'] as number) || 0;
+        const curIndent = (fmt['indent'] as number) || 0;
+        if (prevList && prevList !== listType && prevIndent === curIndent) {
+          q.formatLine(lineIdx, lineLen, 'list', prevList, 'silent');
+        }
+      }
 
       pos = lineIdx + lineLen;
     }
 
-    // 4. Additional: ensure no trailing empty lines beyond one
+    // 4. Consolidate: merge adjacent same-level lists with no intervening heading
+    // (handled by rule 3 above — each item adopts the type of the one above it,
+    //  which cascade-converts the entire run to match the topmost item)
+
+    // 5. Remove trailing empty lines beyond one
     const totalLen = q.getLength();
     if (totalLen > 2) {
       const lastText = q.getText(totalLen - 2, 2);
