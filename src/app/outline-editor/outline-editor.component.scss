@@ -149,7 +149,7 @@ $panel-width: 380px;
     .dragging-source { opacity: 0.25; }
   }
 
-  .ql-tooltip { border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+  .ql-tooltip { border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,0.2); z-index: 100 !important; }
   .ql-bubble .ql-toolbar { background: #444; border-radius: 4px; }
 }
 

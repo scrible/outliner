@@ -231,13 +231,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
           });
         }
       });
-      // Prevent cursor placement in citation items
+      // Prevent cursor placement and editing in citation items
       editorRoot.addEventListener('mousedown', (e: MouseEvent) => {
         const target = (e.target as HTMLElement).closest('li[data-list="citation"]');
         if (target) {
           e.preventDefault();
+          e.stopPropagation();
         }
-      });
+      }, true); // capture phase to beat Quill
     }
 
     // Track mouse position for single hover handle
@@ -258,14 +259,19 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
     // (selection-change handled above)
 
+    let formatTimer: any = null;
     this.quill.on('text-change', () => {
       requestAnimationFrame(() => this.updateLineHandles());
+      // Backup: also run formatter after 20s of no changes
+      clearTimeout(formatTimer);
+      formatTimer = setTimeout(() => this.formatOutline(), 20000);
     });
 
-    // Run formatter when editor loses focus (cleaner than debounce timer)
+    // Run formatter when editor loses focus
     const edRoot = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
     if (edRoot) {
       edRoot.addEventListener('blur', () => {
+        clearTimeout(formatTimer);
         setTimeout(() => this.formatOutline(), 100);
       });
     }
@@ -417,12 +423,18 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     }
     const insertAt = atIndex + offset;
     this.quill.insertText(insertAt, citation + '\n', 'user');
-    // Format as citation list item (not blockquote)
-    this.quill.formatLine(insertAt, 1, { list: 'citation', blockquote: false }, 'user');
+    // Format as citation list item
+    this.quill.formatLine(insertAt, 1, { list: 'bullet' }, 'user'); // first make it a list item
     this.quill.formatText(insertAt, citation.length, { italic: true }, 'user');
-    this.quill.setSelection(insertAt + citation.length + 1, 0);
-    // Run formatter to clean up
-    requestAnimationFrame(() => this.formatOutline());
+    // Then set the citation type (Quill's formatLine may not support custom values directly)
+    requestAnimationFrame(() => {
+      const [line] = this.quill.getLine(insertAt);
+      if (line && (line as any).domNode) {
+        (line as any).domNode.setAttribute('data-list', 'citation');
+      }
+      this.quill.setSelection(insertAt + citation.length + 1, 0);
+      this.formatOutline();
+    });
   }
 
   formatMLA(source: any): string {
@@ -458,6 +470,38 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       pos = nextIdx + nextLen;
     }
     return { start: startLineIdx, length: docLen - startLineIdx };
+  }
+
+  getListItemWithChildren(startIndex: number, startLength: number): { start: number; length: number } | null {
+    const startFmt = this.quill.getFormat(startIndex, startLength);
+    const startIndent = ((startFmt as any)['indent'] as number) || 0;
+
+    let pos = startIndex + startLength;
+    const docLen = this.quill.getLength();
+    let totalLength = startLength;
+
+    // Walk forward: include any lines with greater indent (children)
+    while (pos < docLen) {
+      const [nextLine] = this.quill.getLine(pos);
+      if (!nextLine) break;
+      const nextIdx = this.quill.getIndex(nextLine as any);
+      const nextLen = (nextLine as any).length();
+      const nextFmt = this.quill.getFormat(nextIdx, nextLen);
+      const nextIndent = ((nextFmt as any)['indent'] as number) || 0;
+
+      // If next line is more indented, it's a child — include it
+      if (nextIndent > startIndent) {
+        totalLength = (nextIdx + nextLen) - startIndex;
+        pos = nextIdx + nextLen;
+      } else {
+        break; // Same or less indent — not a child
+      }
+    }
+
+    if (totalLength > startLength) {
+      return { start: startIndex, length: totalLength };
+    }
+    return null; // No children
   }
 
   updateLineHandles() {
@@ -525,6 +569,11 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         // Highlight heading + all section children
         const range = this.getHeadingSectionRange(best.index);
         if (range) sectionEls = this.getElementsInRange(range.start, range.length);
+        else sectionEls = [best.el];
+      } else if (tag === 'LI') {
+        // Highlight list item + any indented children
+        const childRange = this.getListItemWithChildren(best.index, best.length);
+        if (childRange) sectionEls = this.getElementsInRange(childRange.start, childRange.length);
         else sectionEls = [best.el];
       } else {
         sectionEls = [best.el];
@@ -614,6 +663,15 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       if (section) {
         dragIndex = section.start;
         dragLength = section.length;
+      }
+    }
+
+    // For list items: also grab any indented children below them
+    if (tag === 'LI') {
+      const childRange = this.getListItemWithChildren(handle.index, handle.length);
+      if (childRange) {
+        dragIndex = childRange.start;
+        dragLength = childRange.length;
       }
     }
 
@@ -1127,13 +1185,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       }
 
       // 3. Auto-convert list type to match neighboring list at same indent
+      //    EXCEPT: never convert citations — they keep their type
       const listType = (fmt as any)['list'] as string | undefined;
-      if (listType && lineIdx > 0) {
+      if (listType && listType !== 'citation' && lineIdx > 0) {
         const prevFmt = q.getFormat(lineIdx - 1, 1);
         const prevList = (prevFmt as any)['list'] as string | undefined;
         const prevIndent = ((prevFmt as any)['indent'] as number) || 0;
         const curIndent = (fmt['indent'] as number) || 0;
-        if (prevList && prevList !== listType && prevIndent === curIndent) {
+        if (prevList && prevList !== listType && prevList !== 'citation' && prevIndent === curIndent) {
           q.formatLine(lineIdx, lineLen, 'list', prevList, 'silent');
         }
       }
