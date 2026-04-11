@@ -3,6 +3,29 @@ import { CommonModule } from '@angular/common';
 import { SafeUrlPipe } from '../safe-url.pipe';
 import Quill from 'quill';
 
+// Register custom "citation" list type so Quill renders data-list="citation" on LI elements
+const ListItem = Quill.import('formats/list/item') as any;
+if (ListItem) {
+  const origFormats = ListItem.formats;
+  ListItem.formats = function(domNode: HTMLElement) {
+    const result = origFormats.call(this, domNode);
+    // Preserve citation data-list value
+    if (domNode.getAttribute('data-list') === 'citation') {
+      return 'citation';
+    }
+    return result;
+  };
+  // Extend format() to accept 'citation' value
+  const origFormat = ListItem.prototype.format;
+  ListItem.prototype.format = function(name: string, value: any) {
+    if (name === ListItem.blotName && value === 'citation') {
+      this.domNode.setAttribute('data-list', 'citation');
+    } else {
+      origFormat.call(this, name, value);
+    }
+  };
+}
+
 interface LineInfo {
   el: HTMLElement;
   index: number;
@@ -87,7 +110,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
           [{ list: 'ordered' }, { list: 'bullet' }],
           [{ indent: '-1' }, { indent: '+1' }],
           ['bold', 'italic', 'underline'],
-          ['blockquote', 'link'],
+          ['link'],
         ],
         keyboard: {
           bindings: {
@@ -122,23 +145,13 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
               }
               return true;
             }},
-            // Tab on blockquote: indent the blockquote line (not insert tab character)
-            'blockquote tab': { key: 'Tab', shiftKey: false, format: ['blockquote'], handler: (range: any) => {
-              this.quill.formatLine(range.index, 1, 'indent', '+1');
-              return false;
-            }},
-            'blockquote shift-tab': { key: 'Tab', shiftKey: true, format: ['blockquote'], handler: (range: any) => {
-              this.quill.formatLine(range.index, 1, 'indent', '-1');
-              return false;
-            }},
-            // Prevent typing in blockquotes (citations are read-only)
-            // Any printable character in a blockquote is suppressed
-            // (Backspace, Delete, Enter are handled separately below)
-            // Enter on blockquote: insert a new bullet list item (not another blockquote)
-            'blockquote enter': { key: 'Enter', collapsed: true, format: ['blockquote'], handler: (range: any) => {
+            // Enter on citation list item: create a regular bullet (not another citation)
+            'citation enter': { key: 'Enter', collapsed: true, handler: (range: any) => {
+              const fmt = this.quill.getFormat(range.index, 1);
+              if ((fmt as any)['list'] !== 'citation') return true; // not a citation, let default handle
               const idx = range.index;
               this.quill.insertText(idx, '\n', 'user');
-              this.quill.formatLine(idx + 1, 1, { blockquote: false, list: 'bullet' }, 'user');
+              this.quill.formatLine(idx + 1, 1, { list: 'bullet' }, 'user');
               this.quill.setSelection(idx + 1, 0);
               return false;
             }},
@@ -200,13 +213,15 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       this.updateHeaderButtons();
     });
 
-    // Click on blockquote (citation) → open source detail panel
+    // Click on citation list item → open source detail panel + prevent editing
     const editorRoot = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
     if (editorRoot) {
       editorRoot.addEventListener('click', (e: MouseEvent) => {
-        const target = (e.target as HTMLElement).closest('blockquote');
+        const target = (e.target as HTMLElement).closest('li[data-list="citation"]');
         if (!target) return;
-        // Find matching source by comparing citation text
+        e.preventDefault();
+        // Deselect text in the citation (prevent editing)
+        this.quill.setSelection(null as any);
         const text = target.textContent || '';
         const source = this.sampleSources.find(s => text.includes(s.author) || text.includes(s.title));
         if (source) {
@@ -216,10 +231,14 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
           });
         }
       });
+      // Prevent cursor placement in citation items
+      editorRoot.addEventListener('mousedown', (e: MouseEvent) => {
+        const target = (e.target as HTMLElement).closest('li[data-list="citation"]');
+        if (target) {
+          e.preventDefault();
+        }
+      });
     }
-
-    // Make blockquotes visually read-only (cursor changes)
-    // Actual edit prevention is handled by reverting changes in text-change handler
 
     // Track mouse position for single hover handle
     const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
@@ -386,9 +405,8 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     this.quill.focus();
   }
 
-  /** Always inserts a citation with consistent gold blockquote formatting */
+  /** Inserts a citation as a styled list item (data-list="citation") */
   private insertCitationText(citation: string, atIndex: number) {
-    // Check if we need a leading newline (avoid double-newlines)
     let offset = 0;
     if (atIndex > 0) {
       const prevChar = this.quill.getText(atIndex - 1, 1);
@@ -399,10 +417,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     }
     const insertAt = atIndex + offset;
     this.quill.insertText(insertAt, citation + '\n', 'user');
-    this.quill.formatLine(insertAt, 1, { blockquote: true }, 'user');
+    // Format as citation list item (not blockquote)
+    this.quill.formatLine(insertAt, 1, { list: 'citation', blockquote: false }, 'user');
     this.quill.formatText(insertAt, citation.length, { italic: true }, 'user');
-    // Ensure the line AFTER the citation is not a blockquote
-    this.quill.formatLine(insertAt + citation.length + 1, 1, { blockquote: false }, 'user');
     this.quill.setSelection(insertAt + citation.length + 1, 0);
     // Run formatter to clean up
     requestAnimationFrame(() => this.formatOutline());
@@ -567,7 +584,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       border: 1px dashed #c0d8de;
       border-radius: 6px;
       pointer-events: none;
-      z-index: 1;
+      z-index: 0;
     `;
   }
 
@@ -652,7 +669,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
       this.dragState = { type: 'source', source: src, offsetY: 0 };
 
-      const tempDiv = document.createElement('blockquote');
+      const tempDiv = document.createElement('div');
       tempDiv.textContent = this.formatMLA(src);
       this.createFloatingPreview(tempDiv, e.clientX, e.clientY);
 
@@ -863,8 +880,8 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       });
       if (validBlocks.length === 0) validBlocks = blocks.filter(b => /^H[123]$/.test(b.el.tagName));
     } else if (isListItemDrag) {
-      // List items drop among other list items, blockquotes, or after headings
-      validBlocks = blocks.filter(b => b.el.tagName === 'LI' || b.el.tagName === 'BLOCKQUOTE' || /^H[123]$/.test(b.el.tagName));
+      // List items (including citations) drop among other list items or after headings
+      validBlocks = blocks.filter(b => b.el.tagName === 'LI' || /^H[123]$/.test(b.el.tagName));
     }
 
     let bestBlock: typeof blocks[0] | null = null;
@@ -1454,7 +1471,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         { insert: 'The Perseverance rover (2021) is designed to search for ancient microbial life and collect samples for Earth return.' },
         { insert: '\n', attributes: { list: 'bullet' } },
         { insert: 'NASA. \u201cMars 2020 Perseverance Rover.\u201d science.nasa.gov, 2024. Web.' },
-        { insert: '\n', attributes: { blockquote: true } },
+        { insert: '\n', attributes: { list: 'citation' } },
         { insert: 'Economic Feasibility' },
         { insert: '\n', attributes: { header: 2 } },
         { insert: 'Launch cost reduction' },
