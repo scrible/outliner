@@ -96,3 +96,110 @@ The migration would be substantial (~50h) but would reduce our custom code by ~6
 | Keep Quill for prototype? | Yes |
 | Production editor? | Evaluate TipTap migration |
 | Go fully custom? | No |
+
+---
+
+# Remaining Goals: Planning & Analysis
+
+## Goal 1: Evaluate TipTap (+ SortableJS) — GATE for production
+
+### What to evaluate
+1. **Feature parity check** — Can TipTap replicate our current feature set?
+   - Hierarchical headings (H1/H2/H3) with section-aware operations
+   - Ordered/bulleted lists with nested indentation
+   - Citation list items (custom node type, read-only content, editable position)
+   - Drag & drop: headings move sections, list items move with children
+   - Source panel integration (drag source → insert citation)
+   - Copy to clipboard with proper nested HTML
+   - Inline formatting (bold, italic, underline, link)
+   - Undo/redo
+
+2. **Architecture comparison** — Where does TipTap reduce complexity?
+   - **Drag handles**: TipTap's DragHandle extension vs our custom mouse system (~300 lines)
+   - **Custom node types**: ProseMirror schema allows `citation` as a first-class node (vs our ListItem monkey-patch)
+   - **Keyboard handling**: ProseMirror's InputRules vs our Quill keyboard binding overrides
+   - **DOM manipulation**: ProseMirror manages its own DOM (no scroll.find/getIndex needed)
+   - **Clipboard**: ProseMirror's serializers handle nested HTML natively
+
+3. **Migration effort estimate**
+   - Schema definition: ~4h (headings, lists, citations, blockquotes)
+   - Editor component rewrite: ~12h (replace Quill init with TipTap, wire up toolbar)
+   - Drag & drop: ~8h (DragHandle extension + custom section-aware logic)
+   - Source panel integration: ~4h (drag from panel, citation insertion)
+   - Formatter: ~4h (ProseMirror transforms instead of delta walking)
+   - Testing & polish: ~8h
+   - **Total: ~40h**
+
+### Recommended evaluation approach
+1. Create a branch `feature/tiptap-eval`
+2. Build a minimal TipTap editor with: H1/H2/H3, ordered/bulleted lists, drag handles
+3. Test: does DragHandle move sections? Do lists nest properly?
+4. If yes: build out citations and source panel integration
+5. If no: document the blockers and stay on Quill
+
+### Decision criteria
+- **Switch to TipTap if**: DragHandle works for section reordering, custom nodes support citation type, and the migration estimate holds under 50h
+- **Stay on Quill if**: TipTap's DragHandle doesn't support section-aware moves, or ProseMirror schema can't represent our outline structure
+
+## Goal 2: Accessibility and visual regression report
+
+### Scope
+- Run axe-core on all pages of the Scrible app (sign-in, library, contentview, outline editor)
+- Generate HTML report with violations grouped by severity
+- Set up Playwright visual regression baseline screenshots
+- Integrate into `scrible-dev test` command
+
+### Prerequisites
+- Dev environment running (`scrible-dev up`)
+- `dev-a11y-scan.mjs` already exists in `env/development/`
+
+### Estimated effort: ~8h
+
+## Goal 3: AngularJS → Angular outline editor migration
+
+### Dependencies
+- Accessibility report (Goal 2) should be in place first
+- TipTap evaluation (Goal 1) determines which editor to migrate TO
+
+### Two possible paths
+1. **If TipTap is adopted**: Migrate directly from AngularJS outline to TipTap-based Angular outline. Skip intermediate Quill step.
+2. **If staying on Quill**: Port the current prototype into the toolbar2 project as an Angular component, replacing the AngularJS outline.
+
+### Estimated effort: 20-40h depending on path
+
+## Goal 4: Productionize the outline editor
+
+### Requirements beyond the prototype
+- Authentication integration (user context, permissions)
+- Data persistence (save/load outline to server)
+- Real source integration (not sample data)
+- Collaborative editing (optional, future)
+- Mobile responsive design
+- Performance with large outlines (100+ items)
+- Error handling and offline support
+
+### Estimated effort: 40-60h
+
+## Remaining prototype bugs
+
+### Active
+1. Nested list drag edge cases (indent-aware drop positioning)
+2. Mobile/Android rendering (touch events, viewport)
+3. Citation type persistence in complex drag sequences
+
+### Nice-to-have improvements
+- Heading size +/- buttons in toolbar (attempted, needs custom toolbar HTML)
+- Drag preview should show accurate section size
+- Source panel should support real URL fetching (not sample data)
+- Undo/redo should group related operations (e.g., drag = single undo step)
+
+## Execution order
+
+```
+1. TipTap evaluation (gate)
+   ├── If TipTap works → 1a. Build TipTap prototype
+   └── If not → 1b. Harden Quill prototype
+2. Accessibility report
+3. Outline editor migration (path depends on #1)
+4. Productionize
+```
