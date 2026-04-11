@@ -219,9 +219,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       editorRoot.addEventListener('click', (e: MouseEvent) => {
         const target = (e.target as HTMLElement).closest('li[data-list="citation"]');
         if (!target) return;
-        e.preventDefault();
-        // Deselect text in the citation (prevent editing)
-        this.quill.setSelection(null as any);
+        // Open source detail on click (cursor stays for Tab indent support)
         const text = target.textContent || '';
         const source = this.sampleSources.find(s => text.includes(s.author) || text.includes(s.title));
         if (source) {
@@ -231,14 +229,8 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
           });
         }
       });
-      // Prevent cursor placement and editing in citation items
-      editorRoot.addEventListener('mousedown', (e: MouseEvent) => {
-        const target = (e.target as HTMLElement).closest('li[data-list="citation"]');
-        if (target) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }, true); // capture phase to beat Quill
+      // Allow cursor in citations (for Tab indent) but prevent text editing
+      // Text input prevention is handled via the text-change listener below
     }
 
     // Track mouse position for single hover handle
@@ -259,21 +251,31 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
     // (selection-change handled above)
 
-    let formatTimer: any = null;
     this.quill.on('text-change', () => {
       requestAnimationFrame(() => this.updateLineHandles());
-      // Backup: also run formatter after 20s of no changes
-      clearTimeout(formatTimer);
-      formatTimer = setTimeout(() => this.formatOutline(), 20000);
     });
 
-    // Run formatter when editor loses focus
+    // Run formatter when editor loses focus (structural cleanup only — no empty line removal,
+    // since getSelection() returns null on blur and we can't tell which line has focus)
     const edRoot = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
     if (edRoot) {
       edRoot.addEventListener('blur', () => {
-        clearTimeout(formatTimer);
         setTimeout(() => this.formatOutline(), 100);
       });
+
+      // Prevent text input in citations by intercepting keydown
+      edRoot.addEventListener('keydown', (e: KeyboardEvent) => {
+        const sel = this.quill.getSelection();
+        if (!sel) return;
+        const fmt = this.quill.getFormat(sel.index, 1);
+        if ((fmt as any)['list'] !== 'citation') return;
+        // Allow: Tab, Shift+Tab, arrows, Escape, Enter, Backspace/Delete (for removing the citation)
+        const allowed = ['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                         'Escape', 'Enter', 'Backspace', 'Delete', 'Home', 'End'];
+        if (!allowed.includes(e.key) && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+        }
+      }, true);
     }
   }
 
@@ -1160,14 +1162,18 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       const text = q.getText(lineIdx, lineLen);
       const fmt = q.getFormat(lineIdx, lineLen);
 
-      // 1. Remove empty/whitespace-only lines, BUT skip the line the cursor is on
+      // 1. Remove empty/whitespace-only lines, BUT:
+      //    - Skip the line the cursor is on (so new lines survive while typing)
+      //    - Skip if no selection (blur state — can't determine which line has focus)
       const textContent = text.replace(/[\n\s]/g, '');
       const sel = q.getSelection();
-      const cursorOnThisLine = sel && sel.index >= lineIdx && sel.index < lineIdx + lineLen;
-      if (textContent === '' && !fmt['header'] && !cursorOnThisLine && pos + lineLen < q.getLength()) {
-        q.deleteText(lineIdx, lineLen, 'silent');
-        len = q.getLength();
-        continue;
+      if (textContent === '' && !fmt['header'] && sel && pos + lineLen < q.getLength()) {
+        const cursorOnThisLine = sel.index >= lineIdx && sel.index < lineIdx + lineLen;
+        if (!cursorOnThisLine) {
+          q.deleteText(lineIdx, lineLen, 'silent');
+          len = q.getLength();
+          continue;
+        }
       }
 
       // 2. Enforce single-step indentation (no jumping from indent 0 to indent 2+)
