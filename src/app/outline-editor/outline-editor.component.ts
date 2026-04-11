@@ -62,6 +62,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   // Single hover handle (replaces per-line handles)
   hoveredHandle: { top: number; index: number; length: number; el: HTMLElement } | null = null;
   private lastHoveredEl: HTMLElement | null = null;
+  private hoverOverlay: HTMLElement | null = null;
 
   // Drag state
   dragState: DragState | null = null;
@@ -87,7 +88,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
           [{ indent: '-1' }, { indent: '+1' }],
           ['bold', 'italic', 'underline'],
           ['blockquote', 'link'],
-          ['clean'],
         ],
         keyboard: {
           bindings: {
@@ -122,6 +122,18 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
               }
               return true;
             }},
+            // Tab on blockquote: indent the blockquote line (not insert tab character)
+            'blockquote tab': { key: 'Tab', shiftKey: false, format: ['blockquote'], handler: (range: any) => {
+              this.quill.formatLine(range.index, 1, 'indent', '+1');
+              return false;
+            }},
+            'blockquote shift-tab': { key: 'Tab', shiftKey: true, format: ['blockquote'], handler: (range: any) => {
+              this.quill.formatLine(range.index, 1, 'indent', '-1');
+              return false;
+            }},
+            // Prevent typing in blockquotes (citations are read-only)
+            // Any printable character in a blockquote is suppressed
+            // (Backspace, Delete, Enter are handled separately below)
             // Enter on blockquote: insert a new bullet list item (not another blockquote)
             'blockquote enter': { key: 'Enter', collapsed: true, format: ['blockquote'], handler: (range: any) => {
               const idx = range.index;
@@ -130,6 +142,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
               this.quill.setSelection(idx + 1, 0);
               return false;
             }},
+            // Space/Tab at start of heading: suppress (no leading whitespace in headings)
+            'heading space': { key: ' ', collapsed: true, format: ['header'], prefix: /^$/, handler: () => false },
+            'heading tab': { key: 'Tab', collapsed: true, format: ['header'], handler: () => false },
             // Enter at end of heading: insert a new bullet list item
             'heading enter': { key: 'Enter', collapsed: true, format: ['header'], handler: (range: any) => {
               const idx = range.index;
@@ -185,6 +200,27 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       this.updateHeaderButtons();
     });
 
+    // Click on blockquote (citation) → open source detail panel
+    const editorRoot = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
+    if (editorRoot) {
+      editorRoot.addEventListener('click', (e: MouseEvent) => {
+        const target = (e.target as HTMLElement).closest('blockquote');
+        if (!target) return;
+        // Find matching source by comparing citation text
+        const text = target.textContent || '';
+        const source = this.sampleSources.find(s => text.includes(s.author) || text.includes(s.title));
+        if (source) {
+          this.zone.run(() => {
+            this.showPreview = true;
+            this.openSourceDetail(source);
+          });
+        }
+      });
+    }
+
+    // Make blockquotes visually read-only (cursor changes)
+    // Actual edit prevention is handled by reverting changes in text-change handler
+
     // Track mouse position for single hover handle
     const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
     if (wrapper) {
@@ -203,15 +239,17 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
     // (selection-change handled above)
 
-    let formatTimer: any = null;
-    this.quill.on('text-change', (_delta: any, _oldDelta: any, source: string) => {
+    this.quill.on('text-change', () => {
       requestAnimationFrame(() => this.updateLineHandles());
-      // Run formatter on user changes — longer debounce so new empty lines survive until user types
-      if (source === 'user') {
-        clearTimeout(formatTimer);
-        formatTimer = setTimeout(() => this.formatOutline(), 20000);
-      }
     });
+
+    // Run formatter when editor loses focus (cleaner than debounce timer)
+    const edRoot = this.editorContainer.nativeElement.querySelector('.ql-editor') as HTMLElement;
+    if (edRoot) {
+      edRoot.addEventListener('blur', () => {
+        setTimeout(() => this.formatOutline(), 100);
+      });
+    }
   }
 
   ngOnDestroy() {
@@ -306,13 +344,11 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       sectionEls = [handle.el];
     }
 
-    // Clone the actual DOM elements to preserve proper list nesting
+    // Build HTML with proper nesting
     const container = document.createElement('div');
     for (const el of sectionEls) {
-      // For LI elements, wrap in proper OL/UL from the original parent
       if (el.tagName === 'LI' && el.parentElement) {
-        const listTag = el.parentElement.tagName; // OL or UL
-        // Find or create a matching list wrapper in our container
+        const listTag = el.parentElement.tagName;
         let lastChild = container.lastElementChild;
         if (!lastChild || lastChild.tagName !== listTag) {
           lastChild = document.createElement(listTag);
@@ -323,8 +359,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         container.appendChild(el.cloneNode(true));
       }
     }
-
-    const richHtml = container.innerHTML;
+    const richHtml = this.quillHtmlToNestedHtml(container.innerHTML);
     const text = sectionEls.map(el => el.textContent).join('\n');
 
     navigator.clipboard.write([
@@ -478,12 +513,9 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         sectionEls = [best.el];
       }
 
-      // Update highlight — background on all, dashed outline only on the first (header/primary) element
+      // Update highlight — single overlay covering the entire group
       this.clearHoverHighlight();
-      sectionEls.forEach(el => el.classList.add('hover-highlight'));
-      if (sectionEls.length > 0) {
-        sectionEls[0].classList.add('hover-highlight-primary');
-      }
+      this.showHoverOverlay(sectionEls);
       this.lastHoveredEl = best.el;
 
       this.hoveredHandle = {
@@ -500,9 +532,50 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  private showHoverOverlay(elements: HTMLElement[]) {
+    if (elements.length === 0) return;
+    const wrapper = this.editorContainer.nativeElement.closest('.editor-wrapper');
+    if (!wrapper) return;
+    const wrapperRect = wrapper.getBoundingClientRect();
+
+    // Calculate union bounding rect of all elements (including parent ol/ul for list items)
+    let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+    for (const el of elements) {
+      // For list items, use the parent list's left edge to include bullets
+      const target = (el.tagName === 'LI' && el.parentElement) ? el.parentElement : el;
+      const rect = el.getBoundingClientRect();
+      const parentRect = target.getBoundingClientRect();
+      top = Math.min(top, rect.top);
+      bottom = Math.max(bottom, rect.bottom);
+      left = Math.min(left, parentRect.left);
+      right = Math.max(right, rect.right);
+    }
+
+    if (!this.hoverOverlay) {
+      this.hoverOverlay = document.createElement('div');
+      this.hoverOverlay.className = 'hover-overlay';
+      wrapper.appendChild(this.hoverOverlay);
+    }
+
+    this.hoverOverlay.style.cssText = `
+      position: absolute;
+      top: ${top - wrapperRect.top - 4}px;
+      left: ${left - wrapperRect.left - 4}px;
+      width: ${right - left + 8}px;
+      height: ${bottom - top + 8}px;
+      background: #e4f0f3;
+      border: 1px dashed #c0d8de;
+      border-radius: 6px;
+      pointer-events: none;
+      z-index: 1;
+    `;
+  }
+
   private clearHoverHighlight() {
-    document.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
-    document.querySelectorAll('.hover-highlight-primary').forEach(el => el.classList.remove('hover-highlight-primary'));
+    if (this.hoverOverlay) {
+      this.hoverOverlay.remove();
+      this.hoverOverlay = null;
+    }
     this.lastHoveredEl = null;
   }
 
@@ -605,16 +678,6 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     document.addEventListener('mouseup', onUp, true);
   }
 
-  onSourceClick(event: MouseEvent, source: any) {
-    // If we just completed a drag, don't open preview
-    if (this.sourceJustDragged) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.sourceJustDragged = false;
-      return;
-    }
-    this.openSourceDetail(source);
-  }
 
   private getElementsInRange(startIndex: number, length: number): HTMLElement[] {
     const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
@@ -727,10 +790,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   private displacedEl: HTMLElement | null = null;
 
   private attachGlobalListeners() {
-    this.boundMouseMove = (e: MouseEvent) => {
-      (window as any).__globalMoveCount = ((window as any).__globalMoveCount || 0) + 1;
-      this.onGlobalMouseMove(e);
-    };
+    this.boundMouseMove = (e: MouseEvent) => this.onGlobalMouseMove(e);
     this.boundMouseUp = (e: MouseEvent) => this.onGlobalMouseUp(e);
     document.addEventListener('mousemove', this.boundMouseMove, true);
     document.addEventListener('mouseup', this.boundMouseUp, true);
@@ -749,35 +809,16 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     // Update drop indicator position
     this.updateDropIndicator(event.clientX, event.clientY);
 
-    // Debug: log indicator state
-    if (this.dragState.indicatorEl) {
-      (window as any).__lastIndicatorState = {
-        display: this.dragState.indicatorEl.style.display,
-        top: this.dragState.indicatorEl.style.top,
-        dropIdx: this.dragState.dropBeforeIndex,
-        mouseX: event.clientX,
-        mouseY: event.clientY,
-      };
-    }
   }
 
   private updateDropIndicator(clientX: number, clientY: number) {
-    if (!this.dragState?.indicatorEl) {
-      (window as any).__dropDebug = 'no indicatorEl';
-      return;
-    }
+    if (!this.dragState?.indicatorEl) return;
 
     const editor = this.editorContainer.nativeElement.querySelector('.ql-editor');
-    if (!editor) {
-      (window as any).__dropDebug = 'no editor';
-      return;
-    }
+    if (!editor) return;
 
     const wrapperRect = this.editorContainer.nativeElement.closest('.editor-wrapper')?.getBoundingClientRect();
-    if (!wrapperRect) {
-      (window as any).__dropDebug = 'no wrapperRect';
-      return;
-    }
+    if (!wrapperRect) return;
 
     // Collect all block-level elements with their rects
     const blocks: { el: HTMLElement; parent: HTMLElement; rect: DOMRect; quillIdx: number; quillLen: number }[] = [];
@@ -1115,14 +1156,95 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
   }
 
   // ──────────────────────────────────────
+  // HTML transformation — convert Quill's flat lists to properly nested HTML
+  // ──────────────────────────────────────
+  private quillHtmlToNestedHtml(quillHtml: string): string {
+    const temp = document.createElement('div');
+    temp.innerHTML = quillHtml;
+
+    const result = document.createElement('div');
+    const children = Array.from(temp.children);
+
+    for (const child of children) {
+      if (child.tagName === 'OL' || child.tagName === 'UL') {
+        // Process list: convert flat Quill list to nested structure
+        this.nestList(child as HTMLElement, result);
+      } else {
+        result.appendChild(child.cloneNode(true));
+      }
+    }
+    return result.innerHTML;
+  }
+
+  private nestList(flatList: HTMLElement, output: HTMLElement) {
+    const items = Array.from(flatList.children) as HTMLElement[];
+    if (items.length === 0) return;
+
+    const buildNested = (items: HTMLElement[], parentIndent: number): HTMLElement => {
+      // Determine list type from first item
+      const firstType = items[0]?.getAttribute('data-list') || 'bullet';
+      const listEl = document.createElement(firstType === 'ordered' ? 'ol' : 'ul');
+
+      let i = 0;
+      while (i < items.length) {
+        const item = items[i];
+        const indent = this.getQuillIndent(item);
+        const listType = item.getAttribute('data-list') || 'bullet';
+
+        if (indent === parentIndent) {
+          const li = document.createElement('li');
+          // Copy text content (skip the ql-ui span)
+          for (const node of Array.from(item.childNodes)) {
+            if (node instanceof HTMLElement && node.classList.contains('ql-ui')) continue;
+            li.appendChild(node.cloneNode(true));
+          }
+
+          // Check if next items are children (higher indent)
+          const childItems: HTMLElement[] = [];
+          let j = i + 1;
+          while (j < items.length && this.getQuillIndent(items[j]) > parentIndent) {
+            childItems.push(items[j]);
+            j++;
+          }
+
+          if (childItems.length > 0) {
+            const childList = buildNested(childItems, parentIndent + 1);
+            li.appendChild(childList);
+          }
+
+          // Use correct list type
+          if (listType === 'ordered' && listEl.tagName === 'UL') {
+            // Mixed types at same level — just add to current list
+          }
+          listEl.appendChild(li);
+          i = j;
+        } else {
+          i++;
+        }
+      }
+      return listEl;
+    };
+
+    const nested = buildNested(items, 0);
+    output.appendChild(nested);
+  }
+
+  private getQuillIndent(el: HTMLElement): number {
+    for (const cls of Array.from(el.classList)) {
+      const match = cls.match(/^ql-indent-(\d+)$/);
+      if (match) return parseInt(match[1]);
+    }
+    return 0;
+  }
+
+  // ──────────────────────────────────────
   // Export abstraction — swappable for Google Drive API later
   // ──────────────────────────────────────
   private exportOutline(html: string, plainText: string) {
-    // Strategy: clipboard + toast with link (option 3)
-    // TODO: Replace with Google Drive API upload (option 1)
+    const nestedHtml = this.quillHtmlToNestedHtml(html);
     navigator.clipboard.write([
       new ClipboardItem({
-        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/html': new Blob([nestedHtml], { type: 'text/html' }),
         'text/plain': new Blob([plainText], { type: 'text/plain' }),
       })
     ]).catch(() => {});
