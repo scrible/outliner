@@ -109,7 +109,7 @@ $panel-width: 380px;
     blockquote {
       border-left: 3px solid $accent-border;
       padding: 5px 10px;
-      margin: 4px 0 4px 3em;
+      margin: 4px 0 4px 1.5em;
       background: $accent-light;
       color: #78600e;
       font-size: 13px;
@@ -124,28 +124,24 @@ $panel-width: 380px;
     .ql-indent-2 { padding-left: 4em; }
     .ql-indent-3 { padding-left: 6em; }
 
-    // Hover highlight — fills the container including bullet/number area
+    // Hover highlight — background on all elements in the group
     .hover-highlight {
       background: $hover-bg !important;
-      border-radius: 4px;
-      outline: 1px dashed darken($hover-bg, 12%);
-      outline-offset: -1px;
-      // For list items: extend highlight to cover bullet via negative margin + padding
-      &:is(li) {
-        margin-left: -1.5em !important;
-        padding-left: calc(1.5em + 6px) !important;
-      }
     }
-    // Fill gaps: when multiple children are highlighted, remove spacing between them
-    .hover-highlight + .hover-highlight { margin-top: 0 !important; }
-    // Parent ol/ul should also highlight when all children are highlighted
+    blockquote.hover-highlight { background: #faecd4 !important; }
+
+    // Dashed outline only on the primary (first) element
+    .hover-highlight-primary {
+      outline: 1px dashed darken($hover-bg, 15%);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    // Parent ol/ul gets background when children are highlighted
     ol:has(> .hover-highlight), ul:has(> .hover-highlight) {
       background: $hover-bg;
       border-radius: 4px;
-      margin-left: -6px;
-      padding-left: calc(1.5em + 6px);
     }
-    blockquote.hover-highlight { background: #faecd4 !important; outline-color: #eed8a8; }
 
     .dragging-source { opacity: 0.25; }
   }

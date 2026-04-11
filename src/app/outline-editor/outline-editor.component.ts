@@ -209,7 +209,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
       // Run formatter on user changes — longer debounce so new empty lines survive until user types
       if (source === 'user') {
         clearTimeout(formatTimer);
-        formatTimer = setTimeout(() => this.formatOutline(), 3000);
+        formatTimer = setTimeout(() => this.formatOutline(), 20000);
       }
     });
   }
@@ -478,9 +478,12 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
         sectionEls = [best.el];
       }
 
-      // Update highlight
+      // Update highlight — background on all, dashed outline only on the first (header/primary) element
       this.clearHoverHighlight();
       sectionEls.forEach(el => el.classList.add('hover-highlight'));
+      if (sectionEls.length > 0) {
+        sectionEls[0].classList.add('hover-highlight-primary');
+      }
       this.lastHoveredEl = best.el;
 
       this.hoveredHandle = {
@@ -499,6 +502,7 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
 
   private clearHoverHighlight() {
     document.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
+    document.querySelectorAll('.hover-highlight-primary').forEach(el => el.classList.remove('hover-highlight-primary'));
     this.lastHoveredEl = null;
   }
 
@@ -925,6 +929,13 @@ export class OutlineEditorComponent implements AfterViewInit, OnDestroy {
     }
 
     this.cleanupDrag();
+    // Clean up any stale inline margin-top from displacement
+    const editorEl = this.editorContainer.nativeElement.querySelector('.ql-editor');
+    if (editorEl) {
+      editorEl.querySelectorAll('[style*="margin-top"]').forEach((el: Element) => {
+        (el as HTMLElement).style.marginTop = '';
+      });
+    }
     requestAnimationFrame(() => {
       this.formatOutline();
       this.updateLineHandles();
