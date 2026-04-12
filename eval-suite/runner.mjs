@@ -62,7 +62,11 @@ for (const file of scenarioFiles) {
 
   console.log(`\n── ${scenarioName} ──`);
 
-  if (isProgrammatic) {
+  if (isProgrammatic && scenarioName.includes('mobile')) {
+    // Run mobile compatibility checks
+    const results = await runMobileScenario(browser, url, scenarioName, outDir);
+    allResults.push(...results);
+  } else if (isProgrammatic) {
     // Run axe-core accessibility checks
     const results = await runAccessibilityScenario(context, url, content, scenarioName, outDir);
     allResults.push(...results);
@@ -256,4 +260,63 @@ async function executeActions(page, check) {
       continue;
     }
   }
+}
+
+// ─── Mobile scenario runner ───
+
+async function runMobileScenario(browser, url, scenarioName, outDir) {
+  const devices = [
+    { id: '10.1', name: 'Renders on Chrome Android', device: { viewport: { width: 393, height: 851 }, userAgent: 'Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 Chrome/120.0', isMobile: true, hasTouch: true } },
+    { id: '10.2', name: 'Renders on Safari iOS', device: { viewport: { width: 390, height: 844 }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1', isMobile: true, hasTouch: true } },
+  ];
+
+  const results = [];
+
+  for (const { id, name, device } of devices) {
+    const ctx = await browser.newContext(device);
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', err => errors.push(err.message));
+
+    try {
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+      await page.waitForTimeout(3000);
+      const hasContent = await page.evaluate(() => (document.body?.innerText || '').length > 100);
+      await page.screenshot({ path: join(outDir, `${scenarioName}-${id}.png`) });
+      const pass = hasContent && errors.length === 0;
+      const detail = !hasContent ? 'Content not rendered' : errors.length > 0 ? `JS errors: ${errors[0]}` : 'Renders correctly';
+      results.push({ scenario: scenarioName, check: id, name, pass, detail });
+      console.log(`  ${pass ? '✓' : '✗'} ${name}`);
+      if (!pass) console.log(`    ${detail}`);
+    } catch (err) {
+      results.push({ scenario: scenarioName, check: id, name, pass: false, detail: `Load error: ${err.message}` });
+      console.log(`  ✗ ${name}`);
+    }
+    await ctx.close();
+  }
+
+  // Additional checks
+  const mobileCtx = await browser.newContext(devices[0].device);
+  const mobilePage = await mobileCtx.newPage();
+  await mobilePage.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+  await mobilePage.waitForTimeout(3000);
+
+  const isScrollable = await mobilePage.evaluate(() => {
+    const el = document.querySelector('.editor-scroll') || document.documentElement;
+    return el.scrollHeight > el.clientHeight;
+  });
+  results.push({ scenario: scenarioName, check: '10.3', name: 'Content is scrollable on mobile', pass: isScrollable, detail: isScrollable ? 'Scrollable' : 'Not scrollable' });
+  console.log(`  ${isScrollable ? '✓' : '✗'} Content is scrollable on mobile`);
+
+  const noHScroll = await mobilePage.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 5);
+  results.push({ scenario: scenarioName, check: '10.4', name: 'No horizontal scroll needed', pass: noHScroll, detail: noHScroll ? 'Fits viewport' : 'Horizontal overflow' });
+  console.log(`  ${noHScroll ? '✓' : '✗'} No horizontal scroll needed`);
+
+  const sourcesBtn = await mobilePage.$('button:has-text("Sources")');
+  const sourcesBtnVisible = sourcesBtn ? await sourcesBtn.isVisible() : false;
+  results.push({ scenario: scenarioName, check: '10.5', name: 'Sources button accessible on mobile', pass: sourcesBtnVisible, detail: sourcesBtnVisible ? 'Visible' : 'Not visible or not found' });
+  console.log(`  ${sourcesBtnVisible ? '✓' : '✗'} Sources button accessible on mobile`);
+
+  await mobileCtx.close();
+  return results;
 }
