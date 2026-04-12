@@ -7,3 +7,4 @@
  */
 export { TiptapEditorDirective } from './editor.directive';
 export { TiptapBubbleMenuDirective } from './bubble-menu.directive';
+export { Citation } from './citation-node';

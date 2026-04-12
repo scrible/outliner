@@ -56,7 +56,7 @@ Be strict but fair. If the expected outcome is mostly met with minor styling dif
           },
         ],
         inferenceConfig: {
-          maxTokens: 300,
+          maxTokens: 500,
           temperature: 0,
         },
       });

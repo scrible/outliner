@@ -4,7 +4,7 @@ import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import BubbleMenu from '@tiptap/extension-bubble-menu';
 import DragHandle from '@tiptap/extension-drag-handle';
-import { TiptapEditorDirective, TiptapBubbleMenuDirective } from '../shared/tiptap';
+import { TiptapEditorDirective, TiptapBubbleMenuDirective, Citation } from '../shared/tiptap';
 
 @Component({
   selector: 'app-outline-editor-tiptap',
@@ -43,6 +43,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           orderedList: { keepMarks: true, keepAttributes: true },
         }),
         BubbleMenu,
+        Citation,
         DragHandle.configure({
           render: () => {
             const el = document.createElement('div');
@@ -81,8 +82,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   insertCitation(source: any) {
     const citation = this.formatMLA(source);
     this.editor.chain().focus().insertContent({
-      type: 'blockquote',
-      content: [{ type: 'paragraph', content: [{ type: 'text', marks: [{ type: 'italic' }], text: citation }] }],
+      type: 'citation',
+      attrs: { sourceUrl: source.url, sourceTitle: source.title, sourceAuthor: source.author },
+      content: [{ type: 'text', marks: [{ type: 'italic' }], text: citation }],
     }).run();
   }
 
@@ -143,9 +145,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             { type: 'paragraph', content: [{ type: 'text', text: 'The Perseverance rover (2021) is designed to search for ancient microbial life and collect samples for Earth return.' }] },
           ]},
         ]},
-        { type: 'blockquote', content: [
-          { type: 'paragraph', content: [{ type: 'text', marks: [{ type: 'italic' }], text: 'NASA. \u201cMars 2020 Perseverance Rover.\u201d science.nasa.gov, 2024. Web.' }] },
-        ]},
+        { type: 'citation', attrs: { sourceUrl: 'https://science.nasa.gov/mission/mars-2020-perseverance/', sourceTitle: 'Mars 2020 Perseverance Rover', sourceAuthor: 'NASA' },
+          content: [{ type: 'text', marks: [{ type: 'italic' }], text: 'NASA. \u201cMars 2020 Perseverance Rover.\u201d science.nasa.gov, 2024. Web.' }],
+        },
         { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Economic Feasibility' }] },
         { type: 'orderedList', content: [
           { type: 'listItem', content: [

@@ -81,6 +81,22 @@ $panel-width: 380px;
     li { margin: 2px 0; padding: 2px 6px; border-radius: 4px; }
     li p { margin: 0; }
 
+    // Citation custom node
+    .citation-node {
+      border-left: 3px solid $accent-border;
+      padding: 5px 10px;
+      margin: 4px 0 4px 1.5em;
+      background: $accent-light;
+      color: #78600e;
+      font-size: 13px;
+      font-style: italic;
+      border-radius: 0 4px 4px 0;
+      cursor: pointer;
+      user-select: none;
+      &:hover { background: darken($accent-light, 3%); }
+    }
+
+    // Fallback for any remaining blockquotes
     blockquote {
       border-left: 3px solid $accent-border;
       padding: 5px 10px;
