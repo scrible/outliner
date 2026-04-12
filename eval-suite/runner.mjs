@@ -281,8 +281,16 @@ async function runMobileScenario(browser, url, scenarioName, outDir) {
     try {
       await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
       await page.waitForTimeout(3000);
-      const hasContent = await page.evaluate(() => (document.body?.innerText || '').length > 100);
+
+      // Check content rendered
+      const hasContent = await page.evaluate(() => {
+        const body = document.body?.innerText || '';
+        return body.length > 100;
+      });
+
+      // Take screenshot
       await page.screenshot({ path: join(outDir, `${scenarioName}-${id}.png`) });
+
       const pass = hasContent && errors.length === 0;
       const detail = !hasContent ? 'Content not rendered' : errors.length > 0 ? `JS errors: ${errors[0]}` : 'Renders correctly';
       results.push({ scenario: scenarioName, check: id, name, pass, detail });
@@ -292,26 +300,32 @@ async function runMobileScenario(browser, url, scenarioName, outDir) {
       results.push({ scenario: scenarioName, check: id, name, pass: false, detail: `Load error: ${err.message}` });
       console.log(`  ✗ ${name}`);
     }
+
     await ctx.close();
   }
 
-  // Additional checks
+  // Additional checks using first mobile context
   const mobileCtx = await browser.newContext(devices[0].device);
   const mobilePage = await mobileCtx.newPage();
   await mobilePage.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
   await mobilePage.waitForTimeout(3000);
 
+  // 10.3 Scrollable
   const isScrollable = await mobilePage.evaluate(() => {
-    const el = document.querySelector('.editor-scroll') || document.documentElement;
-    return el.scrollHeight > el.clientHeight;
+    const scrollEl = document.querySelector('.editor-scroll') || document.documentElement;
+    return scrollEl.scrollHeight > scrollEl.clientHeight;
   });
   results.push({ scenario: scenarioName, check: '10.3', name: 'Content is scrollable on mobile', pass: isScrollable, detail: isScrollable ? 'Scrollable' : 'Not scrollable' });
   console.log(`  ${isScrollable ? '✓' : '✗'} Content is scrollable on mobile`);
 
-  const noHScroll = await mobilePage.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 5);
+  // 10.4 No horizontal scroll
+  const noHScroll = await mobilePage.evaluate(() => {
+    return document.documentElement.scrollWidth <= document.documentElement.clientWidth + 5;
+  });
   results.push({ scenario: scenarioName, check: '10.4', name: 'No horizontal scroll needed', pass: noHScroll, detail: noHScroll ? 'Fits viewport' : 'Horizontal overflow' });
   console.log(`  ${noHScroll ? '✓' : '✗'} No horizontal scroll needed`);
 
+  // 10.5 Sources button accessible
   const sourcesBtn = await mobilePage.$('button:has-text("Sources")');
   const sourcesBtnVisible = sourcesBtn ? await sourcesBtn.isVisible() : false;
   results.push({ scenario: scenarioName, check: '10.5', name: 'Sources button accessible on mobile', pass: sourcesBtnVisible, detail: sourcesBtnVisible ? 'Visible' : 'Not visible or not found' });

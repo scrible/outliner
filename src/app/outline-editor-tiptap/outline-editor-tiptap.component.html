@@ -1,0 +1,81 @@
+<div class="outline-shell" [class.preview-open]="showPreview">
+  <div class="editor-panel">
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <img class="logo" src="https://www.scrible.com/assets/scrible-logo.png" alt="scrible" height="28"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='inline'">
+        <h1 class="app-title" style="display:none">Outline Editor</h1>
+      </div>
+      <div class="toolbar-right">
+        <button class="btn btn-ghost" (click)="showPreview = !showPreview" [class.active]="showPreview"
+                aria-label="Toggle source panel">
+          <span class="material-icons" aria-hidden="true">web</span> Sources
+        </button>
+      </div>
+    </header>
+
+    <div class="editor-scroll" tabindex="0" role="region" aria-label="Outline content">
+      <div class="editor-wrapper">
+        <div tiptap [editor]="editor" class="tiptap-host"></div>
+      </div>
+    </div>
+  </div>
+
+  @if (showPreview) {
+    <aside class="preview-panel" aria-label="Source panel">
+      <div class="preview-header">
+        <span class="preview-title">Sources</span>
+        <button class="btn-icon" (click)="selectedSource ? goBackToSources() : closePreview()"
+                [attr.aria-label]="selectedSource ? 'Back to sources' : 'Close panel'">
+          <span class="material-icons" aria-hidden="true">{{ selectedSource ? 'arrow_back' : 'close' }}</span>
+        </button>
+      </div>
+
+      @if (!selectedSource) {
+        <div class="source-list">
+          <p class="source-hint">Click a source to view details or insert a citation.</p>
+          @for (source of sampleSources; track source.url) {
+            <div class="source-card" (click)="openSourceDetail(source)"
+                 role="group" [attr.aria-label]="'Source: ' + source.title">
+              <img class="source-favicon"
+                   [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
+                   alt="" width="24" height="24" aria-hidden="true">
+              <div class="source-info">
+                <div class="source-name">{{ source.title }}</div>
+                <div class="source-meta">{{ source.author }} &middot; {{ source.date }}</div>
+              </div>
+            </div>
+          }
+        </div>
+      } @else {
+        <div class="source-detail">
+          <button class="btn btn-sm" (click)="goBackToSources()" aria-label="Back to sources">&larr; All Sources</button>
+          <h3 class="source-detail-title">
+            <a [href]="selectedSource.url" target="_blank" rel="noopener noreferrer">
+              {{ selectedSource.title }}
+              <span class="material-icons" aria-hidden="true" style="font-size:14px;vertical-align:middle">open_in_new</span>
+            </a>
+          </h3>
+          <div class="source-detail-meta">{{ selectedSource.author }} &middot; {{ selectedSource.date }}</div>
+          <p class="source-detail-summary">{{ selectedSource.summary }}</p>
+          <button class="btn btn-primary btn-full" (click)="insertCitation(selectedSource)">
+            <span class="material-icons" aria-hidden="true">format_quote</span> Insert Citation
+          </button>
+        </div>
+      }
+    </aside>
+  }
+
+  @if (exportToastVisible) {
+    <div class="export-toast" role="alert">
+      <span class="material-icons" aria-hidden="true">check_circle</span>
+      <span>Outline copied! Paste with <kbd>{{ pasteShortcut }}</kbd> into a
+        <a href="https://docs.google.com/document/create" target="_blank" rel="noopener noreferrer" class="toast-link">Google Doc</a>
+        or any document.
+      </span>
+      <button class="toast-close" (click)="exportToastVisible = false" aria-label="Dismiss">
+        <span class="material-icons" aria-hidden="true">close</span>
+      </button>
+    </div>
+  }
+</div>
