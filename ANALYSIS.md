@@ -325,39 +325,97 @@ These are derived from our experience building and iterating on the Quill protot
 ### Recommendation
 Start deep evaluation with **TipTap**. If TipTap has blockers, evaluate **Lexical** next (cleaner than raw ProseMirror, Meta-backed). **Milkdown** as a dark horse if both have issues.
 
+## Goal 1c: LLM-based behavioral eval suite
+
+### Rationale
+Programmatic tests (DOM selectors, CSS queries, API calls) are tightly coupled to a specific implementation. When comparing Quill vs TipTap vs any other editor, the tests break because the DOM, classes, and APIs differ completely. But the *user experience* should be identical.
+
+An LLM-based eval suite describes tests in terms of **what a human sees and does** — not what the DOM looks like. The LLM interprets screenshots, reads visible text, and performs actions the way a user would. This makes the suite portable across any implementation.
+
+### Architecture
+```
+eval-suite/
+  scenarios/           # Human-readable test scenarios (Markdown)
+    01-basic-structure.md
+    02-drag-drop-headings.md
+    03-drag-drop-list-items.md
+    04-citations.md
+    05-keyboard-behavior.md
+    06-source-panel.md
+    07-clipboard-export.md
+    08-formatting-toolbar.md
+  runner.mjs            # Orchestrator: Playwright + LLM
+  README.md
+```
+
+### Scenario format (example)
+```markdown
+# Drag heading to reorder sections
+
+## Setup
+Navigate to the outline editor. The editor should display an outline with
+multiple headings (Thesis, Background, Economic Feasibility, Conclusion).
+
+## Steps
+1. Hover over the "Conclusion" heading. You should see a drag handle appear
+   and the Conclusion section should be visually highlighted.
+2. Click and drag "Conclusion" upward until it is above "Economic Feasibility"
+   but below "Background".
+3. Release the mouse.
+
+## Expected outcome
+- Headings now appear in order: Thesis, Background, Conclusion, Economic Feasibility.
+- The bullet under Conclusion moved with its heading.
+- No extra blank space between sections.
+- Visual styling is consistent.
+```
+
+### How it works
+1. Runner launches headless Chrome via Playwright
+2. For each scenario, sends setup + steps to Claude with a screenshot
+3. Claude interprets the screenshot, executes steps via Playwright (click coordinates, drag gestures, keyboard)
+4. After each step, new screenshot sent to Claude for evaluation
+5. Claude evaluates "Expected outcome" against final screenshot(s)
+6. Pass/fail results collected with screenshots as evidence
+
+### Key properties
+- **Implementation-agnostic**: No DOM selectors, CSS classes, or API references
+- **Perceptual**: Evaluates visual layout, text, spatial relationships
+- **Portable**: Same scenarios for Quill, TipTap, or any future editor
+- **Evidence-based**: Screenshots saved per step
+- **Extensible**: Add scenarios as Markdown files
+
+### Estimated effort: ~12h
+
 ## Execution order
 
 ```
-Parallel track:
-  ┌─ Goal 1:  TipTap deep evaluation (fail fast on Quill pain points)
-  │    → Produces: go/no-go on TipTap
-  │
-  ├─ Goal 1b: Editor landscape survey (broad, quick)
-  │    → Produces: comparison table, may surface alternatives
-  │
-  └─ Goal 2:  Accessibility report
-  │    → Produces: regression baseline for Goal 3
-  │    → Note: a11y testing facility may also help validate Goal 1
-
-After parallel track:
-  Checkpoint: review Goal 1 progress + Goal 2 a11y tooling
-    → a11y tooling may accelerate remaining Goal 1 validation
-
-After Goals 1, 1b, 2 complete:
-  Goal 3: AngularJS → Angular migration (path decision)
-    ├─ Path A (Quill) → Goal 4 separate
-    ├─ Path B (TipTap or other) → Goal 4 merged
-    └─ Path C (Custom) → Goal 4 separate
+1. Goal 1c: Build LLM eval suite
+     ↓
+2. Run eval suite against Quill prototype (baseline)
+   Continue TipTap prototype buildout (Goal 1)
+   Run eval suite against TipTap prototype (comparison)
+     ↓
+   (Goal 1b: Editor landscape survey — COMPLETE)
+     ↓
+3. Goal 2: Accessibility report (parallel, can start anytime)
+     ↓
+   Checkpoint: review eval results + a11y tooling
+     ↓
+4. Goal 3: AngularJS → Angular migration (path decision)
+     ├─ Path A (Quill) → Goal 4 separate
+     ├─ Path B (TipTap or other) → Goal 4 merged
+     └─ Path C (Custom) → Goal 4 separate
 ```
 
 ## Next steps
 
-1. **Start Goal 1 (fail fast)**: Create `feature/tiptap-eval` branch. Build minimal TipTap editor. Validate the Quill pain points FIRST: nested list tree structure, citation custom node, drag handles with section awareness, collaborative editing support. If these fail, stop early.
+1. **Build the LLM eval suite (Goal 1c)**: Write scenarios from the behavioral requirements. Build Playwright + Claude runner. Validate against Quill prototype for baseline.
 
-2. **In parallel, start Goal 1b**: Research survey of editor landscape. Quick pass — comparison table, not deep prototypes. Focus on collaborative editing support and custom node capabilities. ~4h.
+2. **Continue TipTap evaluation (Goal 1)**: Build out citation node, drag handles, bubble menu. Run eval suite against TipTap for direct comparison.
 
-3. **In parallel, start Goal 2**: Run a11y scanner, generate baseline. Once available, this testing facility can also help validate Goal 1 progress.
+3. **In parallel, Goal 2**: A11y baseline. Independent, can start anytime.
 
-4. **Checkpoint after initial Goal 1 results**: Review with Blake. If TipTap passes the fail-fast checks, continue deeper evaluation using Goal 2's a11y tooling. If it fails, check Goal 1b for alternatives worth deeper evaluation.
+4. **Checkpoint**: Compare eval results (Quill vs TipTap). Blake decides path.
 
-5. **After all parallel work**: Blake decides Path A/B/C for Goal 3. Execute accordingly.
+5. **Execute Goal 3** on chosen path.
