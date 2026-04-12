@@ -93,8 +93,44 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           onNodeChange: ({ node, editor }) => {
             // Track the hovered node — lightweight, no document traversal
             this.hoveredNode = node || null;
-            // Find position only when needed (not on every mouse move)
-            this.hoveredNodePos = -1;
+            this.hoveredNodePos = -1; // lazily resolved
+
+            // Update hover highlight via DOM classes
+            const dom = editor.view.dom;
+            dom.querySelectorAll('.section-highlight, .section-highlight-primary').forEach(
+              (el: Element) => { el.classList.remove('section-highlight', 'section-highlight-primary'); }
+            );
+            if (!node) return;
+
+            // Find the hovered DOM element using the DragHandle's current target
+            // (DragHandle already found it — we just need the corresponding DOM node)
+            // Use text matching since it's lightweight
+            const nodeText = node.textContent?.substring(0, 30);
+            const isHeading = node.type.name === 'heading';
+            const candidates = dom.querySelectorAll(
+              isHeading ? 'h1, h2, h3' : 'li, .citation-node, p, blockquote'
+            );
+            let foundEl: HTMLElement | null = null;
+            for (const el of Array.from(candidates)) {
+              if (el.textContent?.substring(0, 30) === nodeText) {
+                foundEl = el as HTMLElement;
+                break;
+              }
+            }
+            if (!foundEl) return;
+
+            if (isHeading) {
+              // Highlight the heading + all siblings until next heading
+              foundEl.classList.add('section-highlight', 'section-highlight-primary');
+              let sibling = foundEl.nextElementSibling;
+              while (sibling && !sibling.matches('h1, h2, h3')) {
+                (sibling as HTMLElement).classList.add('section-highlight');
+                sibling = sibling.nextElementSibling;
+              }
+            } else {
+              // Single element highlight
+              foundEl.classList.add('section-highlight', 'section-highlight-primary');
+            }
           },
           nested: true,
           onElementDragStart: () => {
@@ -105,24 +141,25 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
               const startPos = dragPos;
               let endPos = startPos + this.hoveredNode.nodeSize;
 
-              // Walk forward to find the next heading at same or higher level
-              this.editor.state.doc.nodesBetween(
-                endPos, this.editor.state.doc.content.size,
-                (n: any, p: number) => {
-                  if (n.type.name === 'heading' && n.attrs['level'] <= headingLevel) {
-                    endPos = p;
-                    return false;
-                  }
-                  endPos = p + n.nodeSize;
-                  return true;
+              // Find section end: walk doc to find next same/higher-level heading
+              const doc = this.editor.state.doc;
+              let sectionEndFound = false;
+              doc.nodesBetween(startPos + this.hoveredNode.nodeSize, doc.content.size, (n: any, p: number) => {
+                if (sectionEndFound) return false;
+                // Only check top-level nodes (depth 1 from doc)
+                const depth = doc.resolve(p).depth;
+                if (depth !== 0) return true; // skip nested nodes
+                if (n.type.name === 'heading' && n.attrs['level'] <= headingLevel) {
+                  endPos = p;
+                  sectionEndFound = true;
+                  return false;
                 }
-              );
+                endPos = p + n.nodeSize;
+                return false; // don't descend into this top-level node
+              });
+              if (!sectionEndFound) endPos = doc.content.size;
 
-              // Select the full section so DragHandle drags it all
-              this.editor.chain()
-                .setNodeSelection(startPos)
-                .run();
-              // Expand to text selection covering the whole section
+              // Select the full section
               this.editor.chain()
                 .setTextSelection({ from: startPos, to: endPos })
                 .run();
@@ -201,7 +238,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         doc = this.editor.state.doc;
         const emptyPositions: number[] = [];
         doc.descendants((node: any, pos: number) => {
-          if (node.type.name === 'listItem' && node.textContent === '') {
+          if (node.type.name === 'listItem' && node.textContent.trim() === '') {
             emptyPositions.push(pos);
           }
           return true;
@@ -212,7 +249,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           const currentDoc = this.editor.state.doc;
           if (pos < currentDoc.content.size) {
             const node = currentDoc.nodeAt(pos);
-            if (node && node.type.name === 'listItem' && node.textContent === '') {
+            if (node && node.type.name === 'listItem' && node.textContent.trim() === '') {
               this.editor.chain().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
             }
           }
@@ -290,11 +327,21 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   // ── Export ──
   exportToGoogleDoc() {
-    const html = this.editor.getHTML();
+    const rawHtml = this.editor.getHTML();
+    // Wrap in a styled HTML fragment for better paste into Google Docs
+    const styledHtml = `<html><body>
+      <style>
+        h1 { font-size: 20px; font-weight: bold; }
+        h2 { font-size: 16px; font-weight: bold; color: #1d6e82; }
+        h3 { font-size: 14px; font-weight: bold; }
+        blockquote, .citation-node { border-left: 3px solid #ECB86B; padding: 4px 8px; background: #FCF4E9; font-style: italic; }
+      </style>
+      ${rawHtml}
+    </body></html>`;
     const text = this.editor.getText();
     navigator.clipboard.write([
       new ClipboardItem({
-        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/html': new Blob([styledHtml], { type: 'text/html' }),
         'text/plain': new Blob([text], { type: 'text/plain' }),
       })
     ]).catch(() => {});
