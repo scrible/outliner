@@ -91,9 +91,30 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       },
     });
 
-    // Hover highlight — use CSS :hover pseudo-class + JS for broader container highlight
-    // Applied via CSS rules in the stylesheet (no JS event listener needed)
-    // The .node-hover-highlight class is applied by DragHandle's onNodeChange or CSS :hover
+    // Handle source drops from the panel
+    this.editor.view.dom.addEventListener('drop', (e: DragEvent) => {
+      const sourceJson = e.dataTransfer?.getData('application/x-scrible-citation');
+      if (!sourceJson) return; // Not a source drop — let TipTap/DragHandle handle it
+      e.preventDefault();
+      e.stopPropagation();
+      const source = JSON.parse(sourceJson);
+      // Insert citation at the drop position
+      const pos = this.editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
+      if (pos) {
+        const citation = this.formatMLA(source);
+        this.editor.chain().focus().insertContentAt(pos.pos, {
+          type: 'citation',
+          attrs: { sourceUrl: source.url, sourceTitle: source.title, sourceAuthor: source.author },
+          content: [{ type: 'text', marks: [{ type: 'italic' }], text: citation }],
+        }).run();
+      }
+    });
+
+    this.editor.view.dom.addEventListener('dragover', (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes('application/x-scrible-citation')) {
+        e.preventDefault(); // Allow drop
+      }
+    });
 
     // Click on citation node → open source detail
     this.editor.on('create', ({ editor }) => {
@@ -128,6 +149,14 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   openSourceDetail(source: any) { this.selectedSource = source; }
   goBackToSources() { this.selectedSource = null; }
   closePreview() { this.showPreview = false; this.selectedSource = null; }
+
+  // ── Source drag ──
+  onSourceDragStart(event: DragEvent, source: any) {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData('application/x-scrible-citation', JSON.stringify(source));
+    event.dataTransfer.setData('text/plain', this.formatMLA(source));
+    event.dataTransfer.effectAllowed = 'copy';
+  }
 
   // ── Citation ──
   insertCitation(source: any) {

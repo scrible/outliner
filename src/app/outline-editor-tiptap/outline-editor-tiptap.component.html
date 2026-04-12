@@ -62,10 +62,12 @@
 
       @if (!selectedSource) {
         <div class="source-list">
-          <p class="source-hint">Click a source to view details or insert a citation.</p>
+          <p class="source-hint">Drag a source to the editor or click to view details.</p>
           @for (source of sampleSources; track source.url) {
             <div class="source-card" (click)="openSourceDetail(source)"
-                 role="group" [attr.aria-label]="'Source: ' + source.title">
+                 draggable="true" (dragstart)="onSourceDragStart($event, source)"
+                 role="group" [attr.aria-label]="'Source: ' + source.title"
+                 style="cursor:grab">
               <img class="source-favicon"
                    [src]="'https://www.google.com/s2/favicons?domain=' + source.url + '&sz=32'"
                    alt="" width="24" height="24" aria-hidden="true">
