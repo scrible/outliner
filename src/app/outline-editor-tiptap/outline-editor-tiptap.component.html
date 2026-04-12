@@ -17,6 +17,28 @@
     <div class="editor-scroll" tabindex="0" role="region" aria-label="Outline content">
       <div class="editor-wrapper">
         <div tiptap [editor]="editor" class="tiptap-host"></div>
+
+        <!-- Bubble menu (floating toolbar on text selection) -->
+        <div tiptapBubbleMenu [editor]="editor" class="bubble-toolbar" *ngIf="editor">
+          <button [class.active]="isHeadingActive(1)" (click)="toggleHeading(1)" title="Heading 1">H1</button>
+          <button [class.active]="isHeadingActive(2)" (click)="toggleHeading(2)" title="Heading 2">H2</button>
+          <button [class.active]="isHeadingActive(3)" (click)="toggleHeading(3)" title="Heading 3">H3</button>
+          <span class="sep"></span>
+          <button [class.active]="editor.isActive('bold')" (click)="editor.chain().focus().toggleBold().run()" title="Bold">
+            <strong>B</strong>
+          </button>
+          <button [class.active]="editor.isActive('italic')" (click)="editor.chain().focus().toggleItalic().run()" title="Italic">
+            <em>I</em>
+          </button>
+          <!-- Underline requires @tiptap/extension-underline — add if needed -->
+          <span class="sep"></span>
+          <button [class.active]="editor.isActive('bulletList')" (click)="editor.chain().focus().toggleBulletList().run()" title="Bullet list">
+            <span class="material-icons" style="font-size:16px">format_list_bulleted</span>
+          </button>
+          <button [class.active]="editor.isActive('orderedList')" (click)="editor.chain().focus().toggleOrderedList().run()" title="Numbered list">
+            <span class="material-icons" style="font-size:16px">format_list_numbered</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

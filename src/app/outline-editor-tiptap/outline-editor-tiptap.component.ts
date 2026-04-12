@@ -2,13 +2,13 @@ import { Component, OnInit, OnDestroy, ViewEncapsulation } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { NgxTiptapModule } from 'ngx-tiptap';
 import BubbleMenu from '@tiptap/extension-bubble-menu';
+import { TiptapEditorDirective, TiptapBubbleMenuDirective } from '../shared/tiptap';
 
 @Component({
   selector: 'app-outline-editor-tiptap',
   standalone: true,
-  imports: [CommonModule, NgxTiptapModule],
+  imports: [CommonModule, TiptapEditorDirective, TiptapBubbleMenuDirective],
   templateUrl: './outline-editor-tiptap.component.html',
   styleUrl: './outline-editor-tiptap.component.scss',
   encapsulation: ViewEncapsulation.None,
@@ -41,6 +41,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           bulletList: { keepMarks: true, keepAttributes: true },
           orderedList: { keepMarks: true, keepAttributes: true },
         }),
+        BubbleMenu,
       ],
       content: this.getDemoContent(),
       editorProps: {
