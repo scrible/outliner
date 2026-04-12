@@ -74,11 +74,19 @@ Be strict but fair. If the expected outcome is mostly met with minor styling dif
       // Extract the text response
       const text = responseBody.output?.message?.content?.[0]?.text || '';
 
-      // Parse JSON from response
+      // Parse JSON from response — handle truncated or malformed JSON
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const result = JSON.parse(jsonMatch[0]);
-        return { pass: !!result.pass, reason: result.reason || '' };
+        try {
+          const result = JSON.parse(jsonMatch[0]);
+          return { pass: !!result.pass, reason: result.reason || '' };
+        } catch {
+          // JSON was truncated — check if pass: true appears in the text
+          const passMatch = text.match(/"pass"\s*:\s*(true|false)/);
+          if (passMatch) {
+            return { pass: passMatch[1] === 'true', reason: 'Response truncated but pass value extracted' };
+          }
+        }
       }
 
       return { pass: false, reason: `Could not parse LLM response: ${text.substring(0, 200)}` };

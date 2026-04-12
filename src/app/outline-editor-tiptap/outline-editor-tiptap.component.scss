@@ -104,6 +104,22 @@ $panel-width: 380px;
   }
 }
 
+// Drag handle (floating, provided by @tiptap/extension-drag-handle)
+.drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  cursor: grab;
+  color: $primary;
+  background: $primary-light;
+  border-radius: 4px;
+  transition: color 150ms, background 150ms;
+  &:hover { color: white; background: $primary; }
+  &:active { cursor: grabbing; }
+}
+
 // Bubble toolbar (floating menu on text selection)
 .bubble-toolbar {
   background: #1e293b;

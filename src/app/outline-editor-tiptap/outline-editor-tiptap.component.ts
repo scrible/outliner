@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import BubbleMenu from '@tiptap/extension-bubble-menu';
+import DragHandle from '@tiptap/extension-drag-handle';
 import { TiptapEditorDirective, TiptapBubbleMenuDirective } from '../shared/tiptap';
 
 @Component({
@@ -42,6 +43,18 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           orderedList: { keepMarks: true, keepAttributes: true },
         }),
         BubbleMenu,
+        DragHandle.configure({
+          render: () => {
+            const el = document.createElement('div');
+            el.classList.add('drag-handle');
+            el.innerHTML = '<span class="material-icons" style="font-size:18px">drag_indicator</span>';
+            return el;
+          },
+          nested: {
+            allowedContainers: ['bulletList', 'orderedList', 'blockquote'],
+            edgeDetection: 'left',
+          },
+        }),
       ],
       content: this.getDemoContent(),
       editorProps: {
