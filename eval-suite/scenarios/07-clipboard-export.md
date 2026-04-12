@@ -6,6 +6,11 @@ Navigate to the outline editor.
 ## Actions
 
 ### 7.1 Copy button shows toast
+<!-- KNOWN: This check fails because the runner's executeActions can't yet handle
+     coordinate-based hover-then-click sequences. The copy icon only appears on
+     mouse hover over the editor content area, which requires a mouse move to
+     specific coordinates rather than a text-based locator. Fix: add coordinate-based
+     hover support to executeActions in runner.mjs. -->
 - Hover over any element in the editor to reveal icons on the left.
 - There should be a small copy icon (clipboard icon) next to a drag handle.
 - Click the copy icon.
