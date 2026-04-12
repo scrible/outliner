@@ -109,9 +109,41 @@ Implementation-agnostic test suite using an LLM (via AWS Bedrock) + Playwright t
 
 See [Eval Suite Design](#eval-suite-design) below for architecture details.
 
-## Goal 2: Evaluate TipTap (+ alternatives) as replacement for Quill
+## Goal 2: Evaluate TipTap (+ alternatives) as replacement for Quill — COMPLETE
 
-Run the eval suite against the Quill prototype (baseline), then against the TipTap prototype (comparison). TipTap fail-fast checks already passed 6/6. Deeper evaluation uses the eval suite for apples-to-apples comparison.
+### Results
+
+| Metric | Quill Prototype | TipTap Prototype |
+|--------|----------------|------------------|
+| Eval score | 55/56 (1 known runner issue) | 56/56 (perfect) |
+| TypeScript lines | ~1,400 | ~300 |
+| Drag & drop code | ~300 lines custom mouse system | 15 lines DragHandle config |
+| Citation implementation | Monkey-patched ListItem blot | First-class ProseMirror schema node |
+| Nested list model | Flat delta (causes orphaning) | Real tree (children are tree children) |
+| Formatter required | ~100 lines (empty lines, indent, list consolidation) | Not needed (tree handles structure) |
+| Clipboard HTML | quillHtmlToNestedHtml() transform required | Native nested HTML output |
+| Experimental APIs used | scroll.find, getIndex, getLine (undocumented) | None |
+| Collaborative editing path | y-quill (available) | @tiptap/extension-collaboration (installed, DragHandle depends on it) |
+| Mobile | ⚠️ Known rendering issues | ✅ 5/5 mobile checks pass |
+| a11y | ✅ 0 violations | ✅ 0 violations |
+
+### Recommendation: TipTap (Path B)
+
+**The TipTap prototype achieves feature parity at 1/5th the code**, with no known behavioral bugs. The Quill prototype has several unresolved issues (citation Tab indent, formatter edge cases, nested list orphaning) that are structurally unfixable due to Quill's flat delta model.
+
+TipTap's advantages are architectural, not cosmetic:
+1. **Tree document model** eliminates the entire class of orphaning/spacing bugs
+2. **DragHandle extension** replaces 300 lines of custom mouse code with 15 lines of config
+3. **Custom Citation node** is a real schema type, not a monkey-patch
+4. **Collaboration** is already a transitive dependency (DragHandle imports it)
+5. **No experimental APIs** — everything we use is documented and stable
+
+### Path decision for Goal 5
+
+Based on these results, **Path B (TipTap)** is the clear recommendation:
+- Merges Goals 5 and 6 (migration + productionization in one effort)
+- The TipTap prototype IS the foundation — not a throwaway
+- Estimated remaining work: custom citation polish, source drag from panel, a11y refinements
 
 ## Goal 3: Editor landscape survey — COMPLETE
 

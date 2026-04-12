@@ -1,16 +1,21 @@
-# Known Issues (as of 2026-04-11)
+# Known Issues
 
-## Resolved
+## TipTap Prototype (tiptap-prototype branch)
 
-- ~~Hover overlay obscures text~~ — Fixed: z-index 0 for overlay, z-index 2 for editor content
-- ~~Citation editable after click~~ — Fixed: citations are now `li[data-list="citation"]`, keydown whitelist blocks text input
-- ~~Tab on citations doesn't indent~~ — Fixed: cursor allowed in citations for Tab/arrow navigation, text input blocked
-- ~~Nested list drag orphaning~~ — Fixed: `getListItemWithChildren()` grabs parent + all indented children
+### Resolved (from Quill prototype — no longer applicable)
+- ~~Nested list orphaning~~ — ProseMirror tree structure prevents this
+- ~~Citation Tab indent~~ — Citation is a schema node with contenteditable=false
+- ~~Formatter edge cases~~ — No formatter needed (tree ops are atomic)
+- ~~Stale inline styles after drag~~ — DragHandle uses ProseMirror transactions
+- ~~Empty line creation after drop~~ — Tree operations don't create orphan newlines
+- ~~Hover overlay obscures text~~ — DragHandle manages its own overlay
 
-## Active bugs
+### Active
+1. **Source drag from panel to editor** — Not yet implemented. Click "Insert Citation" works, but drag-from-panel-to-editor is not wired up.
+2. **Mobile touch drag** — DragHandle uses mouse events. Touch support needs testing/configuration.
+3. **BubbleMenu position** — Sometimes appears at bottom of viewport instead of near selected text (Floating UI positioning edge case).
 
-1. **Nested list drag edge cases** — While parent+children now move together, dragging a nested list item onto another nested list can produce unexpected results. The drop target logic may need refinement for indent-aware positioning.
-
-2. **Mobile/Android rendering** — Doesn't render or work on Chrome on Android. Touch events, viewport, and Quill mobile support all need attention. Important but not urgent.
-
-3. **Citation type persistence in some edge cases** — While the formatter now exempts citations from list consolidation, complex drag sequences involving citations can occasionally lose the `data-list="citation"` attribute if Quill's internal delta operations reconstruct the DOM.
+### Future work
+- Custom citation node: consider making Tab indent work (currently consumed as no-op)
+- Source drag: wire up mousedown on source cards to create a ProseMirror drag
+- Collaborative editing: extension is installed (transitive dep of DragHandle), needs Yjs provider setup
