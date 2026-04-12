@@ -149,17 +149,25 @@ $panel-width: 380px;
   &:active { cursor: grabbing; }
 }
 
-// Hover highlight on nodes (teal background + dashed border)
-// Applied via CSS :hover — works in real browsers, not verifiable in headless Playwright
+// Hover highlight — only the most specific hovered element, no cascading
 .tiptap-host .ProseMirror {
-  h1:hover, h2:hover, h3:hover,
-  li:hover,
-  .citation-node:hover {
+  // Direct children of editor: headings, lists, citations
+  > h1:hover, > h2:hover, > h3:hover,
+  > .citation-node:hover {
     background: #e4f0f3;
     outline: 1px dashed #c0d8de;
     outline-offset: 2px;
     border-radius: 4px;
   }
+  // List items — only highlight the leaf li, not parent li
+  li:hover:not(:has(li:hover)) {
+    background: #e4f0f3;
+    outline: 1px dashed #c0d8de;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  // Prevent parent ol/ul from getting hover background
+  ol:hover, ul:hover { background: transparent; }
 }
 
 // Bubble toolbar (floating menu on text selection)

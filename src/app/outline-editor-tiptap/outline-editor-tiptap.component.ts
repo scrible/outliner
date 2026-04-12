@@ -33,6 +33,8 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   ];
 
   private toastTimer: any = null;
+  private hoveredNode: any = null;
+  private hoveredNodePos: number = -1;
 
   ngOnInit() {
     this.editor = new Editor({
@@ -62,22 +64,47 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
                 <span class="material-icons">drag_indicator</span>
               </div>
             `;
-            // Wire up copy button
+            // Wire up copy button — copies the hovered node (section for headings)
             el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
               e.stopPropagation();
-              const html = this.editor.getHTML();
-              const text = this.editor.getText();
-              navigator.clipboard.write([
-                new ClipboardItem({
-                  'text/html': new Blob([html], { type: 'text/html' }),
-                  'text/plain': new Blob([text], { type: 'text/plain' }),
-                })
-              ]).catch(() => {});
-              this.showToast();
+              if (this.hoveredNode && this.hoveredNodePos >= 0) {
+                const node = this.hoveredNode;
+                const pos = this.hoveredNodePos;
+                // For headings: find section range (heading + everything until next same-level heading)
+                let endPos = pos + node.nodeSize;
+                if (node.type.name === 'heading') {
+                  const level = node.attrs['level'];
+                  this.editor.state.doc.nodesBetween(pos + node.nodeSize, this.editor.state.doc.content.size, (n: any, p: number) => {
+                    if (n.type.name === 'heading' && n.attrs['level'] <= level) {
+                      endPos = p;
+                      return false;
+                    }
+                    return true;
+                  });
+                }
+                const text = this.editor.state.doc.textBetween(pos, endPos, '\n');
+                navigator.clipboard.writeText(text).catch(() => {});
+                this.showToast();
+              }
             });
             return el;
           },
-          nested: true, // Enable for all nested content (lists, citations, etc.)
+          onNodeChange: ({ node, editor }) => {
+            // Track the hovered node for copy button
+            if (node) {
+              let targetPos = -1;
+              editor.state.doc.descendants((n: any, pos: number) => {
+                if (n === node && targetPos < 0) { targetPos = pos; return false; }
+                return true;
+              });
+              this.hoveredNode = node;
+              this.hoveredNodePos = targetPos;
+            } else {
+              this.hoveredNode = null;
+              this.hoveredNodePos = -1;
+            }
+          },
+          nested: true,
         }),
       ],
       content: this.getDemoContent(),
@@ -130,14 +157,42 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       });
     });
 
-    // Light formatter on blur — remove trailing empty paragraphs
-    this.editor.on('blur', ({ editor }) => {
-      const { doc } = editor.state;
-      const lastNode = doc.lastChild;
-      if (lastNode && lastNode.type.name === 'paragraph' && lastNode.textContent === '' && doc.childCount > 1) {
-        const pos = doc.content.size - lastNode.nodeSize;
-        editor.chain().deleteRange({ from: pos, to: doc.content.size }).run();
+    // Formatter: runs on blur + debounced after edits
+    const runFormatter = () => {
+      const { doc, tr } = this.editor.state;
+      let modified = false;
+
+      // Remove trailing empty paragraphs
+      while (doc.lastChild && doc.lastChild.type.name === 'paragraph'
+             && doc.lastChild.textContent === '' && doc.childCount > 1) {
+        const pos = doc.content.size - doc.lastChild.nodeSize;
+        this.editor.chain().deleteRange({ from: pos, to: doc.content.size }).run();
+        modified = true;
       }
+
+      // Remove empty list items that don't have focus
+      const sel = this.editor.state.selection;
+      doc.descendants((node: any, pos: number) => {
+        if (node.type.name === 'listItem' && node.textContent === '') {
+          const isFocused = sel.$from.pos >= pos && sel.$from.pos <= pos + node.nodeSize;
+          if (!isFocused) {
+            this.editor.chain().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+            modified = true;
+            return false;
+          }
+        }
+        return true;
+      });
+    };
+
+    // Run on blur
+    this.editor.on('blur', () => setTimeout(runFormatter, 100));
+
+    // Debounced run after edits (20s — long enough to not interfere with typing)
+    let formatTimer: any = null;
+    this.editor.on('update', () => {
+      clearTimeout(formatTimer);
+      formatTimer = setTimeout(runFormatter, 20000);
     });
   }
 
