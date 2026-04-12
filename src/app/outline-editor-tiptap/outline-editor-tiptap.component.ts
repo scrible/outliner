@@ -45,9 +45,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           orderedList: { keepMarks: true, keepAttributes: true },
         }),
         BubbleMenu.configure({
-          shouldShow: ({ editor }) => {
-            // Show on text selection, but not on empty selections or citations
-            const { from, to } = editor.state.selection;
+          shouldShow: ({ editor, state }) => {
+            // Only show when: editor is focused, text is selected, not in a citation
+            if (!editor.isFocused) return false;
+            const { from, to } = state.selection;
             return from !== to && !editor.isActive('citation');
           },
         }),
@@ -67,9 +68,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             // Wire up copy button — copies the hovered node (section for headings)
             el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
               e.stopPropagation();
-              if (this.hoveredNode && this.hoveredNodePos >= 0) {
+              const pos = this.resolveHoveredNodePos();
+              if (this.hoveredNode && pos >= 0) {
                 const node = this.hoveredNode;
-                const pos = this.hoveredNodePos;
                 // For headings: find section range (heading + everything until next same-level heading)
                 let endPos = pos + node.nodeSize;
                 if (node.type.name === 'heading') {
@@ -90,26 +91,18 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             return el;
           },
           onNodeChange: ({ node, editor }) => {
-            // Track the hovered node for copy button
-            if (node) {
-              let targetPos = -1;
-              editor.state.doc.descendants((n: any, pos: number) => {
-                if (n === node && targetPos < 0) { targetPos = pos; return false; }
-                return true;
-              });
-              this.hoveredNode = node;
-              this.hoveredNodePos = targetPos;
-            } else {
-              this.hoveredNode = null;
-              this.hoveredNodePos = -1;
-            }
+            // Track the hovered node — lightweight, no document traversal
+            this.hoveredNode = node || null;
+            // Find position only when needed (not on every mouse move)
+            this.hoveredNodePos = -1;
           },
           nested: true,
           onElementDragStart: () => {
             // If dragging a heading, expand selection to include the full section
-            if (this.hoveredNode?.type.name === 'heading' && this.hoveredNodePos >= 0) {
+            const dragPos = this.resolveHoveredNodePos();
+            if (this.hoveredNode?.type.name === 'heading' && dragPos >= 0) {
               const headingLevel = this.hoveredNode.attrs['level'];
-              const startPos = this.hoveredNodePos;
+              const startPos = dragPos;
               let endPos = startPos + this.hoveredNode.nodeSize;
 
               // Walk forward to find the next heading at same or higher level
@@ -187,43 +180,50 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       });
     });
 
-    // Formatter: runs on blur + debounced after edits
+    // Formatter: runs on blur only (no timer — avoids interference)
+    let isFormatting = false;
     const runFormatter = () => {
-      const { doc, tr } = this.editor.state;
-      let modified = false;
+      if (isFormatting) return;
+      isFormatting = true;
+      try {
+        // Remove trailing empty paragraphs (use fresh doc ref each iteration)
+        let doc = this.editor.state.doc;
+        let iterations = 0;
+        while (doc.lastChild && doc.lastChild.type.name === 'paragraph'
+               && doc.lastChild.textContent === '' && doc.childCount > 1 && iterations < 5) {
+          const pos = doc.content.size - doc.lastChild.nodeSize;
+          this.editor.chain().deleteRange({ from: pos, to: doc.content.size }).run();
+          doc = this.editor.state.doc; // refresh reference
+          iterations++;
+        }
 
-      // Remove trailing empty paragraphs
-      while (doc.lastChild && doc.lastChild.type.name === 'paragraph'
-             && doc.lastChild.textContent === '' && doc.childCount > 1) {
-        const pos = doc.content.size - doc.lastChild.nodeSize;
-        this.editor.chain().deleteRange({ from: pos, to: doc.content.size }).run();
-        modified = true;
-      }
-
-      // Remove empty list items that don't have focus
-      const sel = this.editor.state.selection;
-      doc.descendants((node: any, pos: number) => {
-        if (node.type.name === 'listItem' && node.textContent === '') {
-          const isFocused = sel.$from.pos >= pos && sel.$from.pos <= pos + node.nodeSize;
-          if (!isFocused) {
-            this.editor.chain().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
-            modified = true;
-            return false;
+        // Remove empty list items (collect positions first, then delete in reverse)
+        doc = this.editor.state.doc;
+        const emptyPositions: number[] = [];
+        doc.descendants((node: any, pos: number) => {
+          if (node.type.name === 'listItem' && node.textContent === '') {
+            emptyPositions.push(pos);
+          }
+          return true;
+        });
+        // Delete in reverse order to preserve positions
+        for (let i = emptyPositions.length - 1; i >= 0; i--) {
+          const pos = emptyPositions[i];
+          const currentDoc = this.editor.state.doc;
+          if (pos < currentDoc.content.size) {
+            const node = currentDoc.nodeAt(pos);
+            if (node && node.type.name === 'listItem' && node.textContent === '') {
+              this.editor.chain().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+            }
           }
         }
-        return true;
-      });
+      } finally {
+        isFormatting = false;
+      }
     };
 
-    // Run on blur
-    this.editor.on('blur', () => setTimeout(runFormatter, 100));
-
-    // Debounced run after edits (20s — long enough to not interfere with typing)
-    let formatTimer: any = null;
-    this.editor.on('update', () => {
-      clearTimeout(formatTimer);
-      formatTimer = setTimeout(runFormatter, 20000);
-    });
+    // Run on blur only
+    this.editor.on('blur', () => setTimeout(runFormatter, 200));
   }
 
   ngOnDestroy() {
@@ -234,6 +234,19 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   openSourceDetail(source: any) { this.selectedSource = source; }
   goBackToSources() { this.selectedSource = null; }
   closePreview() { this.showPreview = false; this.selectedSource = null; }
+
+  /** Resolve the position of the currently hovered node (lazy — only when needed) */
+  private resolveHoveredNodePos(): number {
+    if (!this.hoveredNode) return -1;
+    if (this.hoveredNodePos >= 0) return this.hoveredNodePos;
+    let pos = -1;
+    this.editor.state.doc.descendants((n: any, p: number) => {
+      if (n === this.hoveredNode && pos < 0) { pos = p; return false; }
+      return true;
+    });
+    this.hoveredNodePos = pos;
+    return pos;
+  }
 
   // ── Source drag ──
   onSourceDragStart(event: DragEvent, source: any) {

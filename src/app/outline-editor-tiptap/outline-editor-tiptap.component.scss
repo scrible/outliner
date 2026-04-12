@@ -159,15 +159,15 @@ $panel-width: 380px;
   // Direct children of editor: headings, lists, citations
   > h1:hover, > h2:hover, > h3:hover,
   > .citation-node:hover {
-    background: #e4f0f3;
-    outline: 1px dashed #c0d8de;
+    background: #e4f0f3 !important;
+    outline: 1px dashed #c0d8de !important;
     outline-offset: 2px;
     border-radius: 4px;
   }
   // List items — only highlight the leaf li, not parent li
   li:hover:not(:has(li:hover)) {
-    background: #e4f0f3;
-    outline: 1px dashed #c0d8de;
+    background: #e4f0f3 !important;
+    outline: 1px dashed #c0d8de !important;
     outline-offset: 2px;
     border-radius: 4px;
   }

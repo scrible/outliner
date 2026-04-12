@@ -23,7 +23,9 @@ const args = process.argv.slice(2);
 const url = args.find((_, i) => args[i - 1] === '--url') || 'http://localhost:4300';
 const scenarioFilter = args.find((_, i) => args[i - 1] === '--scenario');
 const profileName = args.find((_, i) => args[i - 1] === '--profile') || 'scrible-dev';
-const outDir = args.find((_, i) => args[i - 1] === '--out') || join(import.meta.dirname, 'results', new Date().toISOString().replace(/[:.]/g, '-'));
+import { fileURLToPath } from 'url';
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const outDir = args.find((_, i) => args[i - 1] === '--out') || join(__dirname, 'results', new Date().toISOString().replace(/[:.]/g, '-'));
 
 mkdirSync(outDir, { recursive: true });
 
@@ -35,7 +37,7 @@ try {
 } catch { execPath = undefined; }
 
 // Load scenarios
-const scenarioDir = join(import.meta.dirname, 'scenarios');
+const scenarioDir = join(__dirname, 'scenarios');
 let scenarioFiles = readdirSync(scenarioDir).filter(f => f.endsWith('.md')).sort();
 if (scenarioFilter) {
   scenarioFiles = scenarioFiles.filter(f => f.includes(scenarioFilter));
