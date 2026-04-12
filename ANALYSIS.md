@@ -101,11 +101,44 @@ The migration would be substantial (~50h) but would reduce our custom code by ~6
 
 # Remaining Goals: Planning & Analysis
 
-## Goal 1: Evaluate TipTap (+ SortableJS) — GATE for production
+Goals are numbered in execution order.
 
-### Behavioral requirements to validate
+## Goal 1: Build LLM-based behavioral eval suite
 
-These are derived from our experience building and iterating on the Quill prototype. Each represents a behavior that either works today, was hard to achieve, or remains broken. The evaluation should confirm TipTap can handle all of them.
+Implementation-agnostic test suite using an LLM (via AWS Bedrock) + Playwright to evaluate outline editor behavior through screenshots and human-like interactions. Includes axe-core a11y validation as a programmatic component. Enables rigorous comparison of any editor implementation.
+
+See [Eval Suite Design](#eval-suite-design) below for architecture details.
+
+## Goal 2: Evaluate TipTap (+ alternatives) as replacement for Quill
+
+Run the eval suite against the Quill prototype (baseline), then against the TipTap prototype (comparison). TipTap fail-fast checks already passed 6/6. Deeper evaluation uses the eval suite for apples-to-apples comparison.
+
+## Goal 3: Editor landscape survey — COMPLETE
+
+See [comparison table](#comparison-table) below. Shortlist: TipTap (primary), Lexical (secondary), Milkdown (tertiary).
+
+## Goal 4: Accessibility and visual regression report
+
+Run axe-core on all Scrible app pages, generate baseline, integrate into `scrible-dev test`. Independent — can run in parallel with Goals 1-2.
+
+## Goal 5: AngularJS → Angular outline editor migration
+
+Three paths (decision after Goal 2):
+- **Path A — Quill**: Port current prototype. Known limitations persist.
+- **Path B — TipTap** (or other from Goal 3): Build new editor, integrate into toolbar2. Merges with Goal 6.
+- **Path C — Fully custom**: Maximum control, maximum effort.
+
+## Goal 6: Productionize the outline editor
+
+If Path B chosen for Goal 5, this merges into it. Otherwise separate.
+
+Requirements: auth, persistence, real sources, collaborative editing (REQUIRED), mobile support (REQUIRED), performance, offline support.
+
+---
+
+## Behavioral requirements to validate
+
+These are derived from our experience building and iterating on the Quill prototype. Each represents a behavior that either works today, was hard to achieve, or remains broken.
 
 #### Document structure
 - [ ] H1/H2/H3 headings define a hierarchical outline
@@ -205,7 +238,7 @@ These are derived from our experience building and iterating on the Quill protot
 - [ ] Consistent vertical spacing between all elements
 - [ ] WCAG 2.1 AA compliant (0 violations verified via axe-core)
 
-### Architecture comparison — Where does TipTap reduce complexity?
+### TipTap architecture comparison — Where does it reduce complexity?
 - **Tree structure**: ProseMirror uses a real document tree (vs Quill's flat delta). Nested lists are actual children, not indent attributes. This solves the orphaning problem natively.
 - **Custom nodes**: `citation` can be a first-class ProseMirror node with its own schema, serialization, and behavior. No monkey-patching.
 - **Drag handles**: TipTap's DragHandle extension vs our ~300 lines of custom mouse drag code.
@@ -234,72 +267,9 @@ These are derived from our experience building and iterating on the Quill protot
 - **Switch to TipTap if**: DragHandle works for section reordering, custom nodes support citation type, and the migration estimate holds under 50h
 - **Stay on Quill if**: TipTap's DragHandle doesn't support section-aware moves, or ProseMirror schema can't represent our outline structure
 
-## Goal 2: Accessibility and visual regression report
+---
 
-### Scope
-- Run axe-core on all pages of the Scrible app (sign-in, library, contentview, outline editor)
-- Generate HTML report with violations grouped by severity
-- Set up Playwright visual regression baseline screenshots
-- Integrate into `scrible-dev test` command
-
-### Prerequisites
-- Dev environment running (`scrible-dev up`)
-- `dev-a11y-scan.mjs` already exists in `env/development/`
-
-### Estimated effort: ~8h
-
-## Goal 3: AngularJS → Angular outline editor migration
-
-### Dependencies
-- Accessibility report (Goal 2) should be in place first (to catch regressions)
-- TipTap evaluation (Goal 1) is NOT a blocker, but informs path choice
-
-### Three possible paths (decision point TBD)
-1. **Path A — Migrate with Quill**: Port the current outliner prototype into toolbar2 as an Angular component. Carries forward known Quill limitations (flat delta, citation tab, formatter edge cases).
-2. **Path B — Migrate with TipTap**: Build a TipTap-based editor and integrate it into toolbar2. Merges Goals 3 and 4 into one effort. Cleanest architecture but highest upfront cost.
-3. **Path C — Fully custom native**: Build the editor from scratch with contenteditable. Maximum control, maximum effort. Not recommended unless both Quill and TipTap prove inadequate.
-
-### How the decision gets made
-- If Goal 1 shows TipTap handles the behavioral requirements → likely Path B
-- If TipTap has blockers → Path A (with known limitations accepted or worked around)
-- Path C only if both alternatives fail
-
-### Estimated effort: 20-40h depending on path
-
-## Goal 4: Productionize the outline editor
-
-### Relationship to Goal 3
-- If Path B is chosen for Goal 3, Goal 4 merges into it (TipTap migration IS productionization)
-- If Path A or C is chosen, Goal 4 is separate work on top of Goal 3
-- Conditional on Goal 1 (TipTap evaluation determines the foundation)
-
-### Requirements beyond the prototype
-- Authentication integration (user context, permissions)
-- Data persistence (save/load outline to server)
-- Real source integration (not sample data)
-- **Collaborative editing (multiple users on same outline)** — REQUIRED. Must not choose an editor that makes this categorically impossible or extremely difficult.
-- **Mobile support (Android & iOS)** — REQUIRED. Editor must render and function on mobile browsers. Touch-based reordering needed. Address after path decision but must not choose architecture with known mobile blockers.
-- Performance with large outlines (100+ items)
-- Error handling and offline support
-
-### Estimated effort: 40-60h (or absorbed into Goal 3 Path B)
-
-## Remaining prototype bugs
-
-### Active
-1. Nested list drag edge cases (indent-aware drop positioning)
-2. Mobile/Android rendering (touch events, viewport)
-3. Citation type persistence in complex drag sequences
-
-### Nice-to-have improvements
-- Heading size +/- buttons in toolbar (attempted, needs custom toolbar HTML)
-- Drag preview should show accurate section size
-- Source panel should support real URL fetching (not sample data)
-- Undo/redo should group related operations (e.g., drag = single undo step)
-
-## Goal 1b: Editor landscape survey — COMPLETE
-
-### Comparison table
+## Comparison table
 
 | Editor | Custom nodes | Tree | Drag/drop | Collab | Angular | Mobile | npm/wk | Verdict |
 |--------|-------------|------|-----------|--------|---------|--------|--------|---------|
@@ -325,17 +295,15 @@ These are derived from our experience building and iterating on the Quill protot
 ### Recommendation
 Start deep evaluation with **TipTap**. If TipTap has blockers, evaluate **Lexical** next (cleaner than raw ProseMirror, Meta-backed). **Milkdown** as a dark horse if both have issues.
 
-## Goal 1c: LLM-based behavioral eval suite
+## Eval suite design
 
 ### Rationale
-Programmatic tests (DOM selectors, CSS queries, API calls) are tightly coupled to a specific implementation. When comparing Quill vs TipTap vs any other editor, the tests break because the DOM, classes, and APIs differ completely. But the *user experience* should be identical.
-
-An LLM-based eval suite describes tests in terms of **what a human sees and does** — not what the DOM looks like. The LLM interprets screenshots, reads visible text, and performs actions the way a user would. This makes the suite portable across any implementation.
+Programmatic tests are tightly coupled to implementation. LLM-based tests describe what a human sees and does, making them portable across Quill, TipTap, or any editor.
 
 ### Architecture
 ```
 eval-suite/
-  scenarios/           # Human-readable test scenarios (Markdown)
+  scenarios/                 # Human-readable test scenarios (Markdown)
     01-basic-structure.md
     02-drag-drop-headings.md
     03-drag-drop-list-items.md
@@ -344,78 +312,58 @@ eval-suite/
     06-source-panel.md
     07-clipboard-export.md
     08-formatting-toolbar.md
-  runner.mjs            # Orchestrator: Playwright + LLM
+    09-accessibility.md      # axe-core (programmatic, implementation-agnostic)
+  runner.mjs                 # Orchestrator: Playwright + Bedrock Claude
   README.md
 ```
 
-### Scenario format (example)
-```markdown
-# Drag heading to reorder sections
+### Two types of evaluation
+1. **Perceptual (LLM)**: Screenshot-based. LLM interprets what it sees, executes actions by coordinates, evaluates outcomes visually. Runs via AWS Bedrock (Claude).
+2. **Programmatic (axe-core)**: WCAG 2.1 AA validation. Runs via Playwright. Implementation-agnostic (axe inspects rendered DOM, not source code).
 
-## Setup
-Navigate to the outline editor. The editor should display an outline with
-multiple headings (Thesis, Background, Economic Feasibility, Conclusion).
-
-## Steps
-1. Hover over the "Conclusion" heading. You should see a drag handle appear
-   and the Conclusion section should be visually highlighted.
-2. Click and drag "Conclusion" upward until it is above "Economic Feasibility"
-   but below "Background".
-3. Release the mouse.
-
-## Expected outcome
-- Headings now appear in order: Thesis, Background, Conclusion, Economic Feasibility.
-- The bullet under Conclusion moved with its heading.
-- No extra blank space between sections.
-- Visual styling is consistent.
-```
-
-### How it works
-1. Runner launches headless Chrome via Playwright
-2. For each scenario, sends setup + steps to Claude with a screenshot
-3. Claude interprets the screenshot, executes steps via Playwright (click coordinates, drag gestures, keyboard)
-4. After each step, new screenshot sent to Claude for evaluation
-5. Claude evaluates "Expected outcome" against final screenshot(s)
-6. Pass/fail results collected with screenshots as evidence
+### LLM runner: Playwright + AWS Bedrock
+- Runner launches headless Chrome via Playwright
+- For each scenario, sends screenshots to Claude via Bedrock API
+- Claude interprets screenshots, returns Playwright actions (click coordinates, drag gestures, keyboard input)
+- Runner executes actions, takes new screenshots, sends back for evaluation
+- Claude evaluates "Expected outcome" against final screenshots
+- Benefits of Bedrock: parallel execution, no Claude Code subscription draw, reusable infrastructure
 
 ### Key properties
 - **Implementation-agnostic**: No DOM selectors, CSS classes, or API references
 - **Perceptual**: Evaluates visual layout, text, spatial relationships
-- **Portable**: Same scenarios for Quill, TipTap, or any future editor
+- **Portable**: Same scenarios for any editor implementation
 - **Evidence-based**: Screenshots saved per step
 - **Extensible**: Add scenarios as Markdown files
+- **Parallelizable**: Bedrock calls can run concurrently across scenarios
 
 ### Estimated effort: ~12h
 
 ## Execution order
 
 ```
-1. Goal 1c: Build LLM eval suite
-     ↓
-2. Run eval suite against Quill prototype (baseline)
-   Continue TipTap prototype buildout (Goal 1)
-   Run eval suite against TipTap prototype (comparison)
-     ↓
-   (Goal 1b: Editor landscape survey — COMPLETE)
-     ↓
-3. Goal 2: Accessibility report (parallel, can start anytime)
-     ↓
-   Checkpoint: review eval results + a11y tooling
-     ↓
-4. Goal 3: AngularJS → Angular migration (path decision)
-     ├─ Path A (Quill) → Goal 4 separate
-     ├─ Path B (TipTap or other) → Goal 4 merged
-     └─ Path C (Custom) → Goal 4 separate
+Goal 1: Build LLM eval suite (Playwright + Bedrock)
+  ↓
+Goal 2: Run eval suite against Quill (baseline) + TipTap (comparison)
+  ↓                    ┌─ Goal 3: Landscape survey — COMPLETE
+  ↓                    │
+  Checkpoint ←─────────┘
+  ↓                    ┌─ Goal 4: A11y report (parallel, anytime)
+  ↓                    │
+Goal 5: Migration ←────┘
+  ├─ Path A (Quill) → Goal 6 separate
+  ├─ Path B (TipTap) → Goal 6 merged
+  └─ Path C (Custom) → Goal 6 separate
 ```
 
 ## Next steps
 
-1. **Build the LLM eval suite (Goal 1c)**: Write scenarios from the behavioral requirements. Build Playwright + Claude runner. Validate against Quill prototype for baseline.
+1. **Goal 1: Build eval suite** — Write scenarios, build Playwright + Bedrock runner, validate against Quill prototype. Plan to be reviewed before implementation begins (Bedrock API design decisions).
 
-2. **Continue TipTap evaluation (Goal 1)**: Build out citation node, drag handles, bubble menu. Run eval suite against TipTap for direct comparison.
+2. **Goal 2: TipTap evaluation** — Continue buildout (citation node, drag, toolbar). Run eval suite for direct comparison with Quill.
 
-3. **In parallel, Goal 2**: A11y baseline. Independent, can start anytime.
+3. **Goal 4: A11y report** — Independent, can start anytime in parallel.
 
-4. **Checkpoint**: Compare eval results (Quill vs TipTap). Blake decides path.
+4. **Checkpoint** — Compare eval results. Blake decides path for Goal 5.
 
-5. **Execute Goal 3** on chosen path.
+5. **Goal 5** — Execute migration on chosen path.
