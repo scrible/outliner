@@ -154,22 +154,20 @@ $panel-width: 380px;
   &:active { cursor: grabbing; }
 }
 
-// Hover highlight — individual elements via CSS, heading sections via JS class
+// Hover highlight — individual elements via CSS, heading sections via ProseMirror decorations
 .tiptap-host .ProseMirror {
-  // Individual non-heading elements: highlight on hover
+  // Individual non-heading, non-list elements: highlight on hover
   > p:hover, > blockquote:hover, > .citation-node:hover {
     background: #e4f0f3;
     border-radius: 4px;
   }
-  // List items: highlight deepest hovered item only
-  li:hover:not(:has(li:hover)) {
+  // Top-level lists: highlight the whole list container on hover (includes bullets/numbers)
+  > ul:hover, > ol:hover {
     background: #e4f0f3;
     border-radius: 4px;
   }
-  // Lists themselves: keep transparent so only li highlights
-  ol, ul { background: transparent; }
 
-  // Section highlight — applied by JS on heading hover
+  // Section highlight — applied by ProseMirror decorations on heading hover
   .section-highlight {
     background: #e4f0f3 !important;
     border-radius: 4px;
@@ -180,15 +178,26 @@ $panel-width: 380px;
     outline: 1px dashed #c0d8de;
     outline-offset: 2px;
   }
+  // Collapse gaps between heading and its section children to form a continuous box
+  .section-highlight-heading + .section-highlight,
+  .section-highlight + .section-highlight {
+    margin-top: 0 !important;
+  }
+  // Extend heading padding to close the gap visually
+  .section-highlight-heading {
+    padding-bottom: 6px;
+  }
 
-  // Drop indicator — style TipTap's native drop cursor as a box
-  .ProseMirror-dropcursor {
+  // Drop indicator — styled as a dotted box
+  .drop-cursor-box {
     border: 2px dashed $gray-ccc !important;
     border-radius: 4px !important;
     background: $gray-f5 !important;
-    height: 28px !important;
+    min-height: 28px !important;
     margin: 4px 0 !important;
     opacity: 1 !important;
+    // Override the inline background-color set by prosemirror-dropcursor
+    background-color: $gray-f5 !important;
   }
 }
 
@@ -201,6 +210,13 @@ $panel-width: 380px;
   align-items: center;
   gap: 2px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  // Hide until positioned by BubbleMenu plugin (prevents flash at bottom on load)
+  // The plugin sets visibility/display via inline styles; until then, keep hidden
+  &:not([style*="position"]) {
+    visibility: hidden !important;
+    opacity: 0;
+    pointer-events: none;
+  }
 
   button {
     background: none;

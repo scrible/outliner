@@ -37,6 +37,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   private toastTimer: any = null;
   private hoveredNode: any = null;
   private hoveredNodePos: number = -1;
+  private sectionHighlightKey = new PluginKey('sectionHighlight');
 
   ngOnInit() {
     this.editor = new Editor({
@@ -45,6 +46,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           heading: { levels: [1, 2, 3] },
           bulletList: { keepMarks: true, keepAttributes: true },
           orderedList: { keepMarks: true, keepAttributes: true },
+          dropcursor: { color: false, width: 0, class: 'drop-cursor-box' },
         }),
         BubbleMenu.configure({
           shouldShow: ({ editor, state }) => {
@@ -55,6 +57,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           },
         }),
         Citation,
+        this.createBackspaceGuard(),
         this.createSectionHighlight(),
         DragHandle.configure({
           render: () => {
@@ -68,6 +71,25 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
                 <span class="material-icons">drag_indicator</span>
               </div>
             `;
+            // Fix drag ghost position: cursor at left edge of preview (content to the right)
+            const grip = el.querySelector('.handle-grip') as HTMLElement;
+            grip?.addEventListener('dragstart', (e: DragEvent) => {
+              if (!e.dataTransfer) return;
+              const origSetDragImage = e.dataTransfer.setDragImage.bind(e.dataTransfer);
+              e.dataTransfer.setDragImage = (img: Element, _x: number, _y: number) => {
+                origSetDragImage(img, 0, 10);
+              };
+            }, true);
+            // When mouse leaves drag handle group and doesn't re-enter ProseMirror, clear highlight
+            el.addEventListener('mouseleave', (e) => {
+              const related = (e as MouseEvent).relatedTarget as HTMLElement | null;
+              if (!related || !related.closest('.ProseMirror')) {
+                const current = this.sectionHighlightKey.getState(this.editor.state)?.headingPos ?? -1;
+                if (current >= 0) {
+                  this.editor.view.dispatch(this.editor.state.tr.setMeta(this.sectionHighlightKey, -1));
+                }
+              }
+            });
             // Wire up copy button — copies the hovered node (section for headings)
             el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
               e.stopPropagation();
@@ -220,13 +242,48 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             }
           }
         }
+
+        // Fix sequential nesting: a nested list's first item must have a preceding
+        // sibling at the parent level. If not, lift it up one level.
+        let fixNeeded = true;
+        let fixIterations = 0;
+        while (fixNeeded && fixIterations < 10) {
+          fixNeeded = false;
+          fixIterations++;
+          doc = this.editor.state.doc;
+          doc.descendants((node: any, pos: number) => {
+            if (fixNeeded) return false;
+            if (node.type.name !== 'listItem') return true;
+            const $pos = doc.resolve(pos);
+            // Check if this listItem is inside a nested list (depth >= 4: doc > ul > li > ul > li)
+            if ($pos.depth < 4) return true;
+            const parentList = $pos.node($pos.depth - 1); // the ul/ol containing this li
+            const grandparentLi = $pos.node($pos.depth - 2); // should be a listItem
+            if (grandparentLi?.type.name !== 'listItem') return true;
+            // Check if the parent listItem has content BEFORE the nested list
+            // i.e., the nested list should not be the first child of its parent listItem
+            const parentListIndex = $pos.index($pos.depth - 2); // index of the ul/ol in the grandparent li
+            if (parentListIndex === 0) {
+              // The nested list is the first child of the parent li — this means
+              // the parent li has no content of its own, just a sublist. Lift this item.
+              this.editor.chain().setTextSelection(pos + 1).liftListItem('listItem').run();
+              fixNeeded = true;
+              return false;
+            }
+            return true;
+          });
+        }
       } finally {
         isFormatting = false;
       }
     };
 
-    // Run on blur only
-    this.editor.on('blur', () => setTimeout(runFormatter, 200));
+    // Run on blur — skip if focus moved to drag handle (avoids formatting during drag)
+    this.editor.on('blur', ({ event }) => {
+      const related = (event as FocusEvent)?.relatedTarget as HTMLElement | null;
+      if (related?.closest('.drag-handle-group')) return;
+      setTimeout(runFormatter, 200);
+    });
   }
 
   ngOnDestroy() {
@@ -238,9 +295,43 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   goBackToSources() { this.selectedSource = null; }
   closePreview() { this.showPreview = false; this.selectedSource = null; }
 
+  /** Prevent Backspace from escaping list items (turning them into paragraphs) */
+  private createBackspaceGuard(): Extension {
+    return Extension.create({
+      name: 'backspaceGuard',
+      addKeyboardShortcuts() {
+        return {
+          'Backspace': ({ editor }) => {
+            const { $from, empty } = editor.state.selection;
+            if (!empty) return false;
+            // Only intercept at the start of a list item's first text position
+            if ($from.parent.type.name !== 'paragraph' && $from.parent.type.name !== 'heading') return false;
+            if ($from.parentOffset !== 0) return false;
+            // Check if we're inside a list item
+            const listItem = $from.node($from.depth - 1);
+            if (listItem?.type.name !== 'listItem') return false;
+            // At the start of a list item — if it's nested, outdent instead of escaping
+            if (editor.can().liftListItem('listItem')) {
+              // Only lift if actually nested (depth > 1 list level)
+              let listDepth = 0;
+              for (let d = $from.depth; d > 0; d--) {
+                if ($from.node(d).type.name === 'listItem') listDepth++;
+              }
+              if (listDepth > 1) {
+                return editor.chain().liftListItem('listItem').run();
+              }
+            }
+            // At top-level list item start — block the backspace
+            return true;
+          },
+        };
+      },
+    });
+  }
+
   /** Create the SectionHighlight extension (ProseMirror plugin with decorations) */
   private createSectionHighlight(): Extension {
-    const pluginKey = new PluginKey('sectionHighlight');
+    const pluginKey = this.sectionHighlightKey;
 
     return Extension.create({
       name: 'sectionHighlight',
@@ -317,7 +408,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
                   }
                   return false; // don't prevent default
                 },
-                mouseleave: (view) => {
+                mouseleave: (view, event) => {
+                  // Don't clear highlight if moving to the drag handle group
+                  const related = (event as MouseEvent).relatedTarget as HTMLElement | null;
+                  if (related?.closest('.drag-handle-group')) return false;
                   const current = pluginKey.getState(view.state)?.headingPos ?? -1;
                   if (current >= 0) {
                     view.dispatch(view.state.tr.setMeta(pluginKey, -1));
