@@ -154,19 +154,32 @@ $panel-width: 380px;
   &:active { cursor: grabbing; }
 }
 
-// Hover highlight applied via JS (.section-highlight class)
+// Hover highlight — individual elements via CSS, heading sections via JS class
 .tiptap-host .ProseMirror {
+  // Individual non-heading elements: highlight on hover
+  > p:hover, > blockquote:hover, > .citation-node:hover {
+    background: #e4f0f3;
+    border-radius: 4px;
+  }
+  // List items: highlight deepest hovered item only
+  li:hover:not(:has(li:hover)) {
+    background: #e4f0f3;
+    border-radius: 4px;
+  }
+  // Lists themselves: keep transparent so only li highlights
+  ol, ul { background: transparent; }
+
+  // Section highlight — applied by JS on heading hover
   .section-highlight {
     background: #e4f0f3 !important;
     border-radius: 4px;
   }
-  .section-highlight-primary {
+  .section-highlight-heading {
+    background: #e4f0f3 !important;
+    border-radius: 4px;
     outline: 1px dashed #c0d8de;
     outline-offset: 2px;
-    border-radius: 4px;
   }
-  // Prevent parent ol/ul from getting stale backgrounds
-  ol, ul { background: transparent; }
 
   // Drop indicator — style TipTap's native drop cursor as a box
   .ProseMirror-dropcursor {

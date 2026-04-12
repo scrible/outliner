@@ -1,9 +1,11 @@
 import { Component, OnInit, OnDestroy, ViewEncapsulation } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Editor } from '@tiptap/core';
+import { Editor, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import BubbleMenu from '@tiptap/extension-bubble-menu';
 import DragHandle from '@tiptap/extension-drag-handle';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { TiptapEditorDirective, TiptapBubbleMenuDirective, Citation } from '../shared/tiptap';
 
 @Component({
@@ -53,6 +55,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           },
         }),
         Citation,
+        this.createSectionHighlight(),
         DragHandle.configure({
           render: () => {
             const el = document.createElement('div');
@@ -90,47 +93,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             });
             return el;
           },
-          onNodeChange: ({ node, editor }) => {
-            // Track the hovered node — lightweight, no document traversal
+          onNodeChange: ({ node }) => {
+            // Track the hovered node for copy/drag — lightweight
             this.hoveredNode = node || null;
-            this.hoveredNodePos = -1; // lazily resolved
-
-            // Update hover highlight via DOM classes
-            const dom = editor.view.dom;
-            dom.querySelectorAll('.section-highlight, .section-highlight-primary').forEach(
-              (el: Element) => { el.classList.remove('section-highlight', 'section-highlight-primary'); }
-            );
-            if (!node) return;
-
-            // Find the hovered DOM element using the DragHandle's current target
-            // (DragHandle already found it — we just need the corresponding DOM node)
-            // Use text matching since it's lightweight
-            const nodeText = node.textContent?.substring(0, 30);
-            const isHeading = node.type.name === 'heading';
-            const candidates = dom.querySelectorAll(
-              isHeading ? 'h1, h2, h3' : 'li, .citation-node, p, blockquote'
-            );
-            let foundEl: HTMLElement | null = null;
-            for (const el of Array.from(candidates)) {
-              if (el.textContent?.substring(0, 30) === nodeText) {
-                foundEl = el as HTMLElement;
-                break;
-              }
-            }
-            if (!foundEl) return;
-
-            if (isHeading) {
-              // Highlight the heading + all siblings until next heading
-              foundEl.classList.add('section-highlight', 'section-highlight-primary');
-              let sibling = foundEl.nextElementSibling;
-              while (sibling && !sibling.matches('h1, h2, h3')) {
-                (sibling as HTMLElement).classList.add('section-highlight');
-                sibling = sibling.nextElementSibling;
-              }
-            } else {
-              // Single element highlight
-              foundEl.classList.add('section-highlight', 'section-highlight-primary');
-            }
+            this.hoveredNodePos = -1;
           },
           nested: true,
           onElementDragStart: () => {
@@ -271,6 +237,100 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   openSourceDetail(source: any) { this.selectedSource = source; }
   goBackToSources() { this.selectedSource = null; }
   closePreview() { this.showPreview = false; this.selectedSource = null; }
+
+  /** Create the SectionHighlight extension (ProseMirror plugin with decorations) */
+  private createSectionHighlight(): Extension {
+    const pluginKey = new PluginKey('sectionHighlight');
+
+    return Extension.create({
+      name: 'sectionHighlight',
+      addProseMirrorPlugins() {
+        return [
+          new Plugin({
+            key: pluginKey,
+            state: {
+              init: () => ({ headingPos: -1 }),
+              apply: (tr, prev) => {
+                const meta = tr.getMeta(pluginKey);
+                if (meta !== undefined) return { headingPos: meta };
+                return prev;
+              },
+            },
+            props: {
+              decorations: (state) => {
+                const { headingPos } = pluginKey.getState(state) || {};
+                if (headingPos < 0) return DecorationSet.empty;
+
+                const doc = state.doc;
+                const headingNode = doc.nodeAt(headingPos);
+                if (!headingNode || headingNode.type.name !== 'heading') return DecorationSet.empty;
+
+                const headingLevel = headingNode.attrs['level'];
+                const decorations: Decoration[] = [];
+
+                // Highlight the heading itself
+                decorations.push(Decoration.node(headingPos, headingPos + headingNode.nodeSize, {
+                  class: 'section-highlight-heading',
+                }));
+
+                // Highlight children until next same-level-or-higher heading
+                let pos = headingPos + headingNode.nodeSize;
+                while (pos < doc.content.size) {
+                  const node = doc.nodeAt(pos);
+                  if (!node) break;
+                  if (node.type.name === 'heading' && node.attrs['level'] <= headingLevel) break;
+                  decorations.push(Decoration.node(pos, pos + node.nodeSize, {
+                    class: 'section-highlight',
+                  }));
+                  pos += node.nodeSize;
+                }
+
+                return DecorationSet.create(doc, decorations);
+              },
+              handleDOMEvents: {
+                mousemove: (view, event) => {
+                  const target = event.target as HTMLElement;
+                  // Walk up to find a heading that's a direct child of the editor
+                  let el: HTMLElement | null = target;
+                  const pm = view.dom;
+                  let headingEl: HTMLElement | null = null;
+                  while (el && el !== pm) {
+                    if (/^H[1-3]$/.test(el.tagName) && el.parentElement === pm) {
+                      headingEl = el;
+                      break;
+                    }
+                    el = el.parentElement;
+                  }
+
+                  // Resolve the heading's document position
+                  let newPos = -1;
+                  if (headingEl) {
+                    const domPos = view.posAtDOM(headingEl, 0);
+                    const resolved = view.state.doc.resolve(domPos);
+                    // Walk up to the top-level (depth 1) heading node
+                    newPos = resolved.depth >= 1 ? resolved.before(1) : domPos;
+                  }
+
+                  const current = pluginKey.getState(view.state)?.headingPos ?? -1;
+                  if (newPos !== current) {
+                    view.dispatch(view.state.tr.setMeta(pluginKey, newPos));
+                  }
+                  return false; // don't prevent default
+                },
+                mouseleave: (view) => {
+                  const current = pluginKey.getState(view.state)?.headingPos ?? -1;
+                  if (current >= 0) {
+                    view.dispatch(view.state.tr.setMeta(pluginKey, -1));
+                  }
+                  return false;
+                },
+              },
+            },
+          }),
+        ];
+      },
+    });
+  }
 
   /** Resolve the position of the currently hovered node (lazy — only when needed) */
   private resolveHoveredNodePos(): number {
