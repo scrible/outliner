@@ -189,6 +189,11 @@ These are derived from our experience building and iterating on the Quill protot
 - [ ] Runs after drag/drop (immediately) and on blur
 - [ ] Does NOT delete newly-created empty lines while user is still typing
 
+#### Collaborative editing
+- [ ] Multiple users can work on the same outline simultaneously
+- [ ] Editor framework has a proven path to real-time collaboration (e.g., Yjs, ShareDB, or built-in)
+- [ ] NOT a hard requirement for the prototype, but must not choose an architecture that makes it categorically impossible or extremely difficult
+
 #### Styling
 - [ ] Scrible brand colors (#1d6e82 teal, #a56708 gold, Arial font)
 - [ ] Consistent vertical spacing between all elements
@@ -266,7 +271,7 @@ These are derived from our experience building and iterating on the Quill protot
 - Authentication integration (user context, permissions)
 - Data persistence (save/load outline to server)
 - Real source integration (not sample data)
-- Collaborative editing (optional, future)
+- **Collaborative editing (multiple users on same outline)** — REQUIRED, not optional. Must not choose an editor that makes this categorically impossible or extremely difficult.
 - Mobile responsive design
 - Performance with large outlines (100+ items)
 - Error handling and offline support
@@ -286,29 +291,68 @@ These are derived from our experience building and iterating on the Quill protot
 - Source panel should support real URL fetching (not sample data)
 - Undo/redo should group related operations (e.g., drag = single undo step)
 
+## Goal 1b: Editor landscape survey (parallel with Goals 1 & 2)
+
+Survey the landscape of open-source JS editor frameworks to ensure we aren't overlooking a better option. This runs in parallel and feeds into the Goal 3 path decision.
+
+### Editors to evaluate
+- **Quill** (current) — flat delta model, known limitations
+- **TipTap** (ProseMirror wrapper) — primary evaluation target
+- **ProseMirror** (raw) — more control, more complexity
+- **Lexical** (Meta) — newer, extensible, Angular via lexical-angular
+- **Slate.js** — React-focused, but evaluate architecture
+- **CKEditor 5** — commercial but has open-source core
+- **Milkdown** — ProseMirror-based, plugin-driven
+- Any other notable options discovered during research
+
+### Evaluation criteria (quick pass, not deep prototype)
+For each editor, answer:
+1. Does it support real tree structure (not flat lists)?
+2. Can it represent custom node types (citations)?
+3. Does it have drag & drop support (built-in or via library)?
+4. What's the collaborative editing story (Yjs, ShareDB, native)?
+5. Angular support (native bindings, wrappers, or DIY)?
+6. Maintenance status (last release, community size)?
+7. Any known blockers for our use case?
+
+### Output
+A comparison table in ANALYSIS.md. May surface alternatives to TipTap worth deeper evaluation.
+
+### Estimated effort: ~4h research
+
 ## Execution order
 
 ```
 Parallel track:
-  ┌─ Goal 1: TipTap evaluation
-  │    → Produces: recommendation + path decision for Goal 3
+  ┌─ Goal 1:  TipTap deep evaluation (fail fast on Quill pain points)
+  │    → Produces: go/no-go on TipTap
   │
-  └─ Goal 2: Accessibility report
-       → Produces: regression baseline for Goal 3
+  ├─ Goal 1b: Editor landscape survey (broad, quick)
+  │    → Produces: comparison table, may surface alternatives
+  │
+  └─ Goal 2:  Accessibility report
+  │    → Produces: regression baseline for Goal 3
+  │    → Note: a11y testing facility may also help validate Goal 1
 
-After both complete:
-  Goal 3: AngularJS → Angular migration
+After parallel track:
+  Checkpoint: review Goal 1 progress + Goal 2 a11y tooling
+    → a11y tooling may accelerate remaining Goal 1 validation
+
+After Goals 1, 1b, 2 complete:
+  Goal 3: AngularJS → Angular migration (path decision)
     ├─ Path A (Quill) → Goal 4 separate
-    ├─ Path B (TipTap) → Goal 4 merged
+    ├─ Path B (TipTap or other) → Goal 4 merged
     └─ Path C (Custom) → Goal 4 separate
 ```
 
 ## Next steps
 
-1. **Start Goal 1**: Create `feature/tiptap-eval` branch in the outliner repo. Build minimal TipTap editor with the behavioral requirements checklist above. Focus first on the items Quill struggles with: proper tree structure for nested lists, citation as a custom node, drag handles with section awareness.
+1. **Start Goal 1 (fail fast)**: Create `feature/tiptap-eval` branch. Build minimal TipTap editor. Validate the Quill pain points FIRST: nested list tree structure, citation custom node, drag handles with section awareness, collaborative editing support. If these fail, stop early.
 
-2. **In parallel, start Goal 2**: Run `dev-a11y-scan.mjs` against the full Scrible app, generate baseline report, integrate into `scrible-dev test`.
+2. **In parallel, start Goal 1b**: Research survey of editor landscape. Quick pass — comparison table, not deep prototypes. Focus on collaborative editing support and custom node capabilities. ~4h.
 
-3. **After Goal 1**: Present findings against the behavioral requirements checklist. Blake decides Path A/B/C for Goal 3.
+3. **In parallel, start Goal 2**: Run a11y scanner, generate baseline. Once available, this testing facility can also help validate Goal 1 progress.
 
-4. **Execute Goal 3** on chosen path. Goal 4 follows or merges depending on path.
+4. **Checkpoint after initial Goal 1 results**: Review with Blake. If TipTap passes the fail-fast checks, continue deeper evaluation using Goal 2's a11y tooling. If it fails, check Goal 1b for alternatives worth deeper evaluation.
+
+5. **After all parallel work**: Blake decides Path A/B/C for Goal 3. Execute accordingly.
