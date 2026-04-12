@@ -120,20 +120,41 @@ $panel-width: 380px;
   }
 }
 
-// Drag handle (floating, provided by @tiptap/extension-drag-handle)
-.drag-handle {
+// Drag handle group (floating, provided by @tiptap/extension-drag-handle)
+.drag-handle-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.handle-copy, .handle-grip {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  cursor: grab;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
   color: $primary;
   background: $primary-light;
-  border-radius: 4px;
   transition: color 150ms, background 150ms;
+  .material-icons { font-size: 16px; }
+}
+.handle-copy {
+  cursor: pointer;
+  &:hover { color: white; background: $primary; }
+}
+.handle-grip {
+  cursor: grab;
   &:hover { color: white; background: $primary; }
   &:active { cursor: grabbing; }
+}
+
+// Hover highlight on nodes (teal background + dashed border)
+.node-hover-highlight {
+  background: #e4f0f3 !important;
+  outline: 1px dashed #c0d8de;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 // Bubble toolbar (floating menu on text selection)

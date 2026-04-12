@@ -38,6 +38,13 @@
           <button [class.active]="editor.isActive('orderedList')" (click)="editor.chain().focus().toggleOrderedList().run()" title="Numbered list">
             <span class="material-icons" style="font-size:16px">format_list_numbered</span>
           </button>
+          <span class="sep"></span>
+          <button (click)="editor.chain().focus().sinkListItem('listItem').run()" title="Indent" [disabled]="!editor.can().sinkListItem('listItem')">
+            <span class="material-icons" style="font-size:16px">format_indent_increase</span>
+          </button>
+          <button (click)="editor.chain().focus().liftListItem('listItem').run()" title="Outdent" [disabled]="!editor.can().liftListItem('listItem')">
+            <span class="material-icons" style="font-size:16px">format_indent_decrease</span>
+          </button>
         </div>
       </div>
     </div>

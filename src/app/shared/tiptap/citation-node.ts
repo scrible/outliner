@@ -12,6 +12,7 @@
  * the ProseMirror schema.
  */
 import { Node, mergeAttributes } from '@tiptap/core';
+import { Plugin } from '@tiptap/pm/state';
 
 export const Citation = Node.create({
   name: 'citation',
@@ -43,7 +44,8 @@ export const Citation = Node.create({
       'data-source-title': node.attrs['sourceTitle'] || '',
       'data-source-author': node.attrs['sourceAuthor'] || '',
       class: 'citation-node',
-      contenteditable: 'false',
+      // Note: NOT contenteditable=false — cursor placement allowed for Tab indent
+      // Text input is blocked via addInputRules returning empty + keyboard shortcuts
     }), 0];
   },
 
@@ -58,14 +60,34 @@ export const Citation = Node.create({
           .focus($from.after() + 2)
           .run();
       },
-      // Tab indents the citation (wraps in a list)
-      'Tab': ({ editor }) => {
-        const { $from } = editor.state.selection;
-        if ($from.parent.type.name !== 'citation') return false;
-        // For now, Tab on citations is a no-op (they're top-level blocks)
-        // Indentation would require wrapping in a list, which changes the structure
-        return true; // consume the event
-      },
+      // Block all printable key input when cursor is in a citation
+      // (citations are read-only content, only position is editable)
+      'Backspace': ({ editor }) => editor.isActive('citation'),
+      'Delete': ({ editor }) => editor.isActive('citation'),
     };
+  },
+
+  // Block text input in citations via ProseMirror filterTransaction
+  addProseMirrorPlugins() {
+    const citationType = this.type;
+    return [
+      new Plugin({
+        filterTransaction: (tr: any) => {
+          // Allow non-doc-changing transactions (selection, etc.)
+          if (!tr.docChanged) return true;
+          // Check if any step modifies a citation node's content
+          let blockEdit = false;
+          tr.steps.forEach((step: any) => {
+            if (step.from !== undefined) {
+              const $from = tr.docs[0]?.resolve?.(step.from);
+              if ($from?.parent?.type === citationType) {
+                blockEdit = true;
+              }
+            }
+          });
+          return !blockEdit;
+        },
+      }),
+    ];
   },
 });

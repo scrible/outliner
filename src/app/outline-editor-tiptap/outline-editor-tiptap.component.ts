@@ -42,19 +42,54 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           bulletList: { keepMarks: true, keepAttributes: true },
           orderedList: { keepMarks: true, keepAttributes: true },
         }),
-        BubbleMenu,
+        BubbleMenu.configure({
+          shouldShow: ({ editor }) => {
+            // Show on text selection, but not on empty selections or citations
+            const { from, to } = editor.state.selection;
+            return from !== to && !editor.isActive('citation');
+          },
+        }),
         Citation,
         DragHandle.configure({
           render: () => {
             const el = document.createElement('div');
-            el.classList.add('drag-handle');
-            el.innerHTML = '<span class="material-icons" style="font-size:18px">drag_indicator</span>';
+            el.classList.add('drag-handle-group');
+            el.innerHTML = `
+              <button class="handle-copy" title="Copy to clipboard" aria-label="Copy element">
+                <span class="material-icons">content_copy</span>
+              </button>
+              <div class="handle-grip" title="Drag to move" aria-label="Drag to reorder">
+                <span class="material-icons">drag_indicator</span>
+              </div>
+            `;
+            // Wire up copy button
+            el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const html = this.editor.getHTML();
+              const text = this.editor.getText();
+              navigator.clipboard.write([
+                new ClipboardItem({
+                  'text/html': new Blob([html], { type: 'text/html' }),
+                  'text/plain': new Blob([text], { type: 'text/plain' }),
+                })
+              ]).catch(() => {});
+              this.showToast();
+            });
             return el;
           },
-          nested: {
-            allowedContainers: ['bulletList', 'orderedList', 'blockquote'],
-            edgeDetection: 'left',
+          onNodeChange: ({ node, editor }) => {
+            // Highlight the hovered node with teal background
+            const view = editor.view;
+            view.dom.querySelectorAll('.node-hover-highlight').forEach(
+              el => el.classList.remove('node-hover-highlight')
+            );
+            if (node) {
+              // Find the DOM node for the current ProseMirror node
+              const domNode = view.dom.querySelector('.ProseMirror > *:hover, .ProseMirror li:hover, .ProseMirror .citation-node:hover');
+              if (domNode) domNode.classList.add('node-hover-highlight');
+            }
           },
+          nested: true, // Enable for all nested content (lists, citations, etc.)
         }),
       ],
       content: this.getDemoContent(),
@@ -80,6 +115,16 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           this.openSourceDetail(source);
         }
       });
+    });
+
+    // Light formatter on blur — remove trailing empty paragraphs
+    this.editor.on('blur', ({ editor }) => {
+      const { doc } = editor.state;
+      const lastNode = doc.lastChild;
+      if (lastNode && lastNode.type.name === 'paragraph' && lastNode.textContent === '' && doc.childCount > 1) {
+        const pos = doc.content.size - lastNode.nodeSize;
+        editor.chain().deleteRange({ from: pos, to: doc.content.size }).run();
+      }
     });
   }
 

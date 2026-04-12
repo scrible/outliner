@@ -237,7 +237,10 @@ async function executeActions(page, check) {
     // Press key
     const pressMatch = line.match(/[Pp]ress (?:the )?(\w+(?:\+\w+)?)/);
     if (pressMatch) {
-      const key = pressMatch[1].replace('Cmd', 'Meta').replace('Ctrl', 'Control');
+      const key = pressMatch[1]
+        .replace('Cmd', 'Meta').replace('Ctrl', 'Control')
+        .replace(/^Up$/i, 'ArrowUp').replace(/^Down$/i, 'ArrowDown')
+        .replace(/^Left$/i, 'ArrowLeft').replace(/^Right$/i, 'ArrowRight');
       await page.keyboard.press(key);
       await page.waitForTimeout(300);
       continue;

@@ -19,7 +19,9 @@ Navigate to the outline editor. Locate a citation element (gold/amber styled ita
 - A source detail panel should appear on the right side, showing information about the cited source (title, author, summary, thumbnail).
 
 ### 4.4 Citation can be dragged
-- Hover near the citation to reveal a drag handle.
+- Hover over the citation to reveal a drag handle.
+  - The handle should appear with a copy icon alongside it.
+  - The citation should be highlighted with a light teal background and dashed border.
 - Drag the citation to a different position in the outline.
 - The citation should move to the new position while maintaining its gold styling.
 

@@ -6,8 +6,11 @@ Navigate to the outline editor. Note the order of section headings.
 ## Actions
 
 ### 2.1 Hover reveals drag handle
-- Move the mouse cursor to the left edge of any section heading (e.g., "Conclusion").
+- Move the mouse cursor over any section heading (e.g., "Conclusion").
 - A drag handle icon (dots or grip icon) should appear to the left of the heading.
+  - The handle should appear when hovering anywhere on the heading's container, not just on the text.
+  - A copy icon should appear alongside the drag handle.
+  - The heading and its content should be highlighted with a light teal background and dashed border.
 
 ### 2.2 Hover highlights section
 - While hovering near a heading, the heading AND all content below it (bullets, citations) up to the next heading should be visually highlighted with a background color or border.
