@@ -194,6 +194,12 @@ These are derived from our experience building and iterating on the Quill protot
 - [ ] Editor framework has a proven path to real-time collaboration (e.g., Yjs, ShareDB, or built-in)
 - [ ] NOT a hard requirement for the prototype, but must not choose an architecture that makes it categorically impossible or extremely difficult
 
+#### Mobile support (Android & iOS)
+- [ ] Editor renders and functions on Chrome/Android and Safari/iOS
+- [ ] Touch-based drag & drop (or acceptable alternative for reordering on mobile)
+- [ ] Toolbar accessible on mobile (not clipped or hidden)
+- [ ] NOT required for the prototype, but must not choose an architecture with known mobile blockers
+
 #### Styling
 - [ ] Scrible brand colors (#1d6e82 teal, #a56708 gold, Arial font)
 - [ ] Consistent vertical spacing between all elements
@@ -271,8 +277,8 @@ These are derived from our experience building and iterating on the Quill protot
 - Authentication integration (user context, permissions)
 - Data persistence (save/load outline to server)
 - Real source integration (not sample data)
-- **Collaborative editing (multiple users on same outline)** — REQUIRED, not optional. Must not choose an editor that makes this categorically impossible or extremely difficult.
-- Mobile responsive design
+- **Collaborative editing (multiple users on same outline)** — REQUIRED. Must not choose an editor that makes this categorically impossible or extremely difficult.
+- **Mobile support (Android & iOS)** — REQUIRED. Editor must render and function on mobile browsers. Touch-based reordering needed. Address after path decision but must not choose architecture with known mobile blockers.
 - Performance with large outlines (100+ items)
 - Error handling and offline support
 
@@ -295,19 +301,19 @@ These are derived from our experience building and iterating on the Quill protot
 
 ### Comparison table
 
-| Editor | Custom nodes | Tree structure | Drag/drop | Collab (Yjs) | Angular | npm/wk | Verdict |
-|--------|-------------|---------------|-----------|-------------|---------|--------|---------|
-| **TipTap** | ✅ Schema nodes | ✅ ProseMirror | ✅ DragHandle ext | ✅ Hocuspocus/y-prosemirror | ✅ ngx-tiptap | 1.2M | **Primary candidate** |
-| **ProseMirror** | ✅ Schema nodes | ✅ Native | Partial (DIY) | ✅ y-prosemirror | DIY | 6M | Viable but more work |
-| **Lexical** | ✅ Custom nodes | ✅ Native | DIY | ✅ y-lexical | Partial (lexical-angular) | 2.5M | Viable, newer ecosystem |
-| **Slate** | ✅ Schema-less | ✅ Native | ✅ dnd-kit | ✅ slate-yjs | Weak (slate-angular, 408/wk) | 200K | Risky Angular support |
-| **Milkdown** | ✅ Plugin nodes | ✅ ProseMirror | ✅ Plugin | ✅ Native Yjs | Weak (ng-milkdown) | 50K | Viable, small community |
-| **Quill** | Monkey-patch | ❌ Flat delta | DIY (ours: ~300 lines) | ✅ y-quill | DIY | 1M | Current — known limits |
-| **CKEditor 5** | Limited | ❌ Not nested | Basic | ❌ Commercial-only | ✅ Official | 150K | **Ruled out** |
-| **TinyMCE** | Plugins | Partial | Yes | ❌ Discontinued 2023 | ✅ | 665K | **Ruled out** |
-| **Froala** | Plugins | Partial | Yes | ❌ None | ✅ | 236K | **Ruled out** (commercial) |
-| **Trix** | ❌ Attachments only | ❌ Flat | ❌ Attachments only | ❌ None | ❌ Rails-focused | 363K | **Ruled out** |
-| **SunEditor** | Limited | Partial | ❌ | ❌ None | DIY | 49K | **Ruled out** |
+| Editor | Custom nodes | Tree | Drag/drop | Collab | Angular | Mobile | npm/wk | Verdict |
+|--------|-------------|------|-----------|--------|---------|--------|--------|---------|
+| **TipTap** | ✅ Schema | ✅ | ✅ DragHandle | ✅ Hocuspocus | ✅ ngx-tiptap | ✅ Tested | 1.2M | **Primary** |
+| **ProseMirror** | ✅ Schema | ✅ | Partial | ✅ y-prosemirror | DIY | ✅ Core supports | 6M | Viable |
+| **Lexical** | ✅ Custom | ✅ | DIY | ✅ y-lexical | Partial | ✅ Meta tests mobile | 2.5M | Secondary |
+| **Slate** | ✅ Schema-less | ✅ | ✅ dnd-kit | ✅ slate-yjs | Weak (408/wk) | ⚠️ React-dep | 200K | Risky |
+| **Milkdown** | ✅ Plugin | ✅ | ✅ Plugin | ✅ Yjs | Weak | ⚠️ Limited docs | 50K | Tertiary |
+| **Quill** | Monkey-patch | ❌ | DIY | ✅ y-quill | DIY | ⚠️ Known issues | 1M | Current |
+| **CKEditor 5** | Limited | ❌ | Basic | ❌ Commercial | ✅ | ✅ | 150K | **Ruled out** |
+| **TinyMCE** | Plugins | Partial | Yes | ❌ Discontinued | ✅ | ✅ | 665K | **Ruled out** |
+| **Froala** | Plugins | Partial | Yes | ❌ None | ✅ | ✅ | 236K | **Ruled out** |
+| **Trix** | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ | 363K | **Ruled out** |
+| **SunEditor** | Limited | Partial | ❌ | ❌ | DIY | ⚠️ | 49K | **Ruled out** |
 
 ### Shortlist for deep evaluation
 1. **TipTap** — Primary. Best combination: DragHandle, ProseMirror tree, Yjs collab, Angular bindings. Largest community of the ProseMirror wrappers.
