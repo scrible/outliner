@@ -26,6 +26,13 @@ export const Citation = Node.create({
       sourceUrl: { default: null },
       sourceTitle: { default: null },
       sourceAuthor: { default: null },
+      indent: {
+        default: 0,
+        renderHTML: (attributes: any) => {
+          if (!attributes['indent']) return {};
+          return { style: `margin-left: ${attributes['indent'] * 2}em` };
+        },
+      },
     };
   },
 
@@ -60,8 +67,20 @@ export const Citation = Node.create({
           .focus($from.after() + 2)
           .run();
       },
-      // Block all printable key input when cursor is in a citation
-      // (citations are read-only content, only position is editable)
+      // Tab indents citation, Shift+Tab outdents
+      'Tab': ({ editor }) => {
+        if (!editor.isActive('citation')) return false;
+        const attrs = editor.getAttributes('citation');
+        const currentIndent = attrs['indent'] || 0;
+        return editor.chain().updateAttributes('citation', { indent: Math.min(currentIndent + 1, 5) }).run();
+      },
+      'Shift-Tab': ({ editor }) => {
+        if (!editor.isActive('citation')) return false;
+        const attrs = editor.getAttributes('citation');
+        const currentIndent = attrs['indent'] || 0;
+        return editor.chain().updateAttributes('citation', { indent: Math.max(currentIndent - 1, 0) }).run();
+      },
+      // Block text-modifying keys in citations
       'Backspace': ({ editor }) => editor.isActive('citation'),
       'Delete': ({ editor }) => editor.isActive('citation'),
     };

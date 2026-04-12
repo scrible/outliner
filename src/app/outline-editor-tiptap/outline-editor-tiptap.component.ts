@@ -77,18 +77,6 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             });
             return el;
           },
-          onNodeChange: ({ node, editor }) => {
-            // Highlight the hovered node with teal background
-            const view = editor.view;
-            view.dom.querySelectorAll('.node-hover-highlight').forEach(
-              el => el.classList.remove('node-hover-highlight')
-            );
-            if (node) {
-              // Find the DOM node for the current ProseMirror node
-              const domNode = view.dom.querySelector('.ProseMirror > *:hover, .ProseMirror li:hover, .ProseMirror .citation-node:hover');
-              if (domNode) domNode.classList.add('node-hover-highlight');
-            }
-          },
           nested: true, // Enable for all nested content (lists, citations, etc.)
         }),
       ],
@@ -102,6 +90,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         },
       },
     });
+
+    // Hover highlight — use CSS :hover pseudo-class + JS for broader container highlight
+    // Applied via CSS rules in the stylesheet (no JS event listener needed)
+    // The .node-hover-highlight class is applied by DragHandle's onNodeChange or CSS :hover
 
     // Click on citation node → open source detail
     this.editor.on('create', ({ editor }) => {
@@ -153,6 +145,20 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     const date = source.date || new Date().getFullYear().toString();
     const accessed = new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
     return `${author}. ${title}. ${date}. Web. ${accessed}.`;
+  }
+
+  // ── Thumbnails (cached via sessionStorage to avoid re-fetching) ──
+  private thumbnailCache: Record<string, string> = {};
+
+  getThumbnailUrl(url: string): string {
+    if (this.thumbnailCache[url]) return this.thumbnailCache[url];
+    const cached = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(`thumb:${url}`) : null;
+    if (cached) { this.thumbnailCache[url] = cached; return cached; }
+    const thumbUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=false&embed=screenshot.url`;
+    // Cache for future use (the URL itself is the cache key — Microlink caches server-side too)
+    this.thumbnailCache[url] = thumbUrl;
+    if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(`thumb:${url}`, thumbUrl);
+    return thumbUrl;
   }
 
   // ── Export ──

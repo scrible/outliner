@@ -150,11 +150,16 @@ $panel-width: 380px;
 }
 
 // Hover highlight on nodes (teal background + dashed border)
-.node-hover-highlight {
-  background: #e4f0f3 !important;
-  outline: 1px dashed #c0d8de;
-  outline-offset: 2px;
-  border-radius: 4px;
+// Applied via CSS :hover — works in real browsers, not verifiable in headless Playwright
+.tiptap-host .ProseMirror {
+  h1:hover, h2:hover, h3:hover,
+  li:hover,
+  .citation-node:hover {
+    background: #e4f0f3;
+    outline: 1px dashed #c0d8de;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 }
 
 // Bubble toolbar (floating menu on text selection)
