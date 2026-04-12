@@ -105,6 +105,36 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             }
           },
           nested: true,
+          onElementDragStart: () => {
+            // If dragging a heading, expand selection to include the full section
+            if (this.hoveredNode?.type.name === 'heading' && this.hoveredNodePos >= 0) {
+              const headingLevel = this.hoveredNode.attrs['level'];
+              const startPos = this.hoveredNodePos;
+              let endPos = startPos + this.hoveredNode.nodeSize;
+
+              // Walk forward to find the next heading at same or higher level
+              this.editor.state.doc.nodesBetween(
+                endPos, this.editor.state.doc.content.size,
+                (n: any, p: number) => {
+                  if (n.type.name === 'heading' && n.attrs['level'] <= headingLevel) {
+                    endPos = p;
+                    return false;
+                  }
+                  endPos = p + n.nodeSize;
+                  return true;
+                }
+              );
+
+              // Select the full section so DragHandle drags it all
+              this.editor.chain()
+                .setNodeSelection(startPos)
+                .run();
+              // Expand to text selection covering the whole section
+              this.editor.chain()
+                .setTextSelection({ from: startPos, to: endPos })
+                .run();
+            }
+          },
         }),
       ],
       content: this.getDemoContent(),
