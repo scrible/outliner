@@ -291,34 +291,33 @@ These are derived from our experience building and iterating on the Quill protot
 - Source panel should support real URL fetching (not sample data)
 - Undo/redo should group related operations (e.g., drag = single undo step)
 
-## Goal 1b: Editor landscape survey (parallel with Goals 1 & 2)
+## Goal 1b: Editor landscape survey — COMPLETE
 
-Survey the landscape of open-source JS editor frameworks to ensure we aren't overlooking a better option. This runs in parallel and feeds into the Goal 3 path decision.
+### Comparison table
 
-### Editors to evaluate
-- **Quill** (current) — flat delta model, known limitations
-- **TipTap** (ProseMirror wrapper) — primary evaluation target
-- **ProseMirror** (raw) — more control, more complexity
-- **Lexical** (Meta) — newer, extensible, Angular via lexical-angular
-- **Slate.js** — React-focused, but evaluate architecture
-- **CKEditor 5** — commercial but has open-source core
-- **Milkdown** — ProseMirror-based, plugin-driven
-- Any other notable options discovered during research
+| Editor | Custom nodes | Tree structure | Drag/drop | Collab (Yjs) | Angular | npm/wk | Verdict |
+|--------|-------------|---------------|-----------|-------------|---------|--------|---------|
+| **TipTap** | ✅ Schema nodes | ✅ ProseMirror | ✅ DragHandle ext | ✅ Hocuspocus/y-prosemirror | ✅ ngx-tiptap | 1.2M | **Primary candidate** |
+| **ProseMirror** | ✅ Schema nodes | ✅ Native | Partial (DIY) | ✅ y-prosemirror | DIY | 6M | Viable but more work |
+| **Lexical** | ✅ Custom nodes | ✅ Native | DIY | ✅ y-lexical | Partial (lexical-angular) | 2.5M | Viable, newer ecosystem |
+| **Slate** | ✅ Schema-less | ✅ Native | ✅ dnd-kit | ✅ slate-yjs | Weak (slate-angular, 408/wk) | 200K | Risky Angular support |
+| **Milkdown** | ✅ Plugin nodes | ✅ ProseMirror | ✅ Plugin | ✅ Native Yjs | Weak (ng-milkdown) | 50K | Viable, small community |
+| **Quill** | Monkey-patch | ❌ Flat delta | DIY (ours: ~300 lines) | ✅ y-quill | DIY | 1M | Current — known limits |
+| **CKEditor 5** | Limited | ❌ Not nested | Basic | ❌ Commercial-only | ✅ Official | 150K | **Ruled out** |
+| **TinyMCE** | Plugins | Partial | Yes | ❌ Discontinued 2023 | ✅ | 665K | **Ruled out** |
+| **Froala** | Plugins | Partial | Yes | ❌ None | ✅ | 236K | **Ruled out** (commercial) |
+| **Trix** | ❌ Attachments only | ❌ Flat | ❌ Attachments only | ❌ None | ❌ Rails-focused | 363K | **Ruled out** |
+| **SunEditor** | Limited | Partial | ❌ | ❌ None | DIY | 49K | **Ruled out** |
 
-### Evaluation criteria (quick pass, not deep prototype)
-For each editor, answer:
-1. Does it support real tree structure (not flat lists)?
-2. Can it represent custom node types (citations)?
-3. Does it have drag & drop support (built-in or via library)?
-4. What's the collaborative editing story (Yjs, ShareDB, native)?
-5. Angular support (native bindings, wrappers, or DIY)?
-6. Maintenance status (last release, community size)?
-7. Any known blockers for our use case?
+### Shortlist for deep evaluation
+1. **TipTap** — Primary. Best combination: DragHandle, ProseMirror tree, Yjs collab, Angular bindings. Largest community of the ProseMirror wrappers.
+2. **Lexical** — Secondary. Meta-backed, clean architecture, but Angular support is thin and drag/drop is DIY.
+3. **Milkdown** — Tertiary. ProseMirror benefits with plugin architecture, but small community (50K/wk) is a risk.
+4. **ProseMirror (raw)** — Fallback. Maximum control but ~2x the effort vs TipTap.
+5. **Slate** — Noted but Angular wrapper at 408 downloads/week is too risky for production.
 
-### Output
-A comparison table in ANALYSIS.md. May surface alternatives to TipTap worth deeper evaluation.
-
-### Estimated effort: ~4h research
+### Recommendation
+Start deep evaluation with **TipTap**. If TipTap has blockers, evaluate **Lexical** next (cleaner than raw ProseMirror, Meta-backed). **Milkdown** as a dark horse if both have issues.
 
 ## Execution order
 
