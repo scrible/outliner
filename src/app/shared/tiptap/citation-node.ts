@@ -36,9 +36,12 @@ export const Citation = Node.create({
     ];
   },
 
-  renderHTML({ HTMLAttributes }) {
+  renderHTML({ HTMLAttributes, node }) {
     return ['div', mergeAttributes(HTMLAttributes, {
       'data-type': 'citation',
+      'data-source-url': node.attrs['sourceUrl'] || '',
+      'data-source-title': node.attrs['sourceTitle'] || '',
+      'data-source-author': node.attrs['sourceAuthor'] || '',
       class: 'citation-node',
       contenteditable: 'false',
     }), 0];

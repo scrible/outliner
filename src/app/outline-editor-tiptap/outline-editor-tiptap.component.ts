@@ -67,6 +67,20 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         },
       },
     });
+
+    // Click on citation node → open source detail
+    this.editor.on('create', ({ editor }) => {
+      editor.view.dom.addEventListener('click', (e: MouseEvent) => {
+        const citationEl = (e.target as HTMLElement).closest('.citation-node');
+        if (!citationEl) return;
+        const sourceUrl = citationEl.getAttribute('data-source-url') || '';
+        const source = this.sampleSources.find(s => sourceUrl.includes(s.url) || citationEl.textContent?.includes(s.author));
+        if (source) {
+          this.showPreview = true;
+          this.openSourceDetail(source);
+        }
+      });
+    });
   }
 
   ngOnDestroy() {

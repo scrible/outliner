@@ -31,13 +31,10 @@ Examine the screenshot carefully and determine whether the following expected ou
 EXPECTED OUTCOMES:
 ${expectedOutcome}
 
-Respond with a JSON object (and nothing else):
-{
-  "pass": true or false,
-  "reason": "Brief explanation of what you see that confirms or contradicts the expected outcomes"
-}
+Respond ONLY with this JSON (no other text, keep reason under 50 words):
+{"pass": true, "reason": "short explanation"}
 
-Be strict but fair. If the expected outcome is mostly met with minor styling differences, that's a pass. If key functional requirements are missing (wrong order, missing elements, broken layout), that's a fail.`;
+Be strict but fair. Minor styling differences = pass. Missing elements or broken layout = fail.`;
 
     try {
       const body = JSON.stringify({

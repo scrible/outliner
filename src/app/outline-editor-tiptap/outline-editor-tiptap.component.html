@@ -72,6 +72,10 @@
       } @else {
         <div class="source-detail">
           <button class="btn btn-sm" (click)="goBackToSources()" aria-label="Back to sources">&larr; All Sources</button>
+          <img class="source-detail-thumb"
+               [src]="'https://api.microlink.io/?url=' + selectedSource.url + '&screenshot=true&meta=false&embed=screenshot.url'"
+               [alt]="selectedSource.title"
+               onerror="this.style.display='none'">
           <h3 class="source-detail-title">
             <a [href]="selectedSource.url" target="_blank" rel="noopener noreferrer">
               {{ selectedSource.title }}
