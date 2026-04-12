@@ -54,6 +54,16 @@ $panel-width: 380px;
 }
 .outline-shell.preview-open .editor-wrapper { margin-right: 0; }
 
+// Drop indicator — the prosemirror-dropcursor element is created as a child of .editor-wrapper
+.editor-wrapper .drop-cursor-box {
+  border: 2px dashed $gray-ccc !important;
+  border-radius: 4px !important;
+  background: $gray-f5 !important;
+  height: 28px !important;
+  opacity: 1 !important;
+  background-color: $gray-f5 !important;
+}
+
 // TipTap editor styles
 .tiptap-host {
   .ProseMirror {
@@ -143,62 +153,41 @@ $panel-width: 380px;
   cursor: pointer;
   &:hover { color: white; background: $primary; }
 }
-// Keep the drag handle group from breaking parent hover highlight
-// The handle floats outside ProseMirror so we use pointer-events passthrough
-.drag-handle-group:hover ~ .ProseMirror *:hover {
-  background: #e4f0f3;
-}
 .handle-grip {
   cursor: grab;
   &:hover { color: white; background: $primary; }
   &:active { cursor: grabbing; }
 }
 
-// Hover highlight — individual elements via CSS, heading sections via ProseMirror decorations
+// Hover highlight — ALL driven by ProseMirror decorations (survives reconciliation + handle hover)
 .tiptap-host .ProseMirror {
-  // Individual non-heading, non-list elements: highlight on hover
-  > p:hover, > blockquote:hover, > .citation-node:hover {
-    background: #e4f0f3;
-    border-radius: 4px;
-  }
-  // Top-level lists: highlight the whole list container on hover (includes bullets/numbers)
-  > ul:hover, > ol:hover {
-    background: #e4f0f3;
-    border-radius: 4px;
-  }
-
-  // Section highlight — applied by ProseMirror decorations on heading hover
-  .section-highlight {
+  // Single-node highlight (list items, citations, paragraphs)
+  .node-highlight {
     background: #e4f0f3 !important;
     border-radius: 4px;
   }
+  // Heading section highlight — heading gets dashed outline
   .section-highlight-heading {
     background: #e4f0f3 !important;
     border-radius: 4px;
     outline: 1px dashed #c0d8de;
     outline-offset: 2px;
+    padding-bottom: 6px;
   }
-  // Collapse gaps between heading and its section children to form a continuous box
-  .section-highlight-heading + .section-highlight,
+  // Heading section children
+  .section-highlight {
+    background: #e4f0f3 !important;
+    border-radius: 4px;
+  }
+  // Collapse gaps within a highlighted section (overrides > * + * spacing)
+  .section-highlight-heading + .section-highlight {
+    margin-top: -2px !important;
+    padding-top: 2px;
+  }
   .section-highlight + .section-highlight {
     margin-top: 0 !important;
   }
-  // Extend heading padding to close the gap visually
-  .section-highlight-heading {
-    padding-bottom: 6px;
-  }
 
-  // Drop indicator — styled as a dotted box
-  .drop-cursor-box {
-    border: 2px dashed $gray-ccc !important;
-    border-radius: 4px !important;
-    background: $gray-f5 !important;
-    min-height: 28px !important;
-    margin: 4px 0 !important;
-    opacity: 1 !important;
-    // Override the inline background-color set by prosemirror-dropcursor
-    background-color: $gray-f5 !important;
-  }
 }
 
 // Bubble toolbar (floating menu on text selection)

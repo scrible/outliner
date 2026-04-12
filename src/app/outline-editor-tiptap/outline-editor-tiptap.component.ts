@@ -37,7 +37,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   private toastTimer: any = null;
   private hoveredNode: any = null;
   private hoveredNodePos: number = -1;
-  private sectionHighlightKey = new PluginKey('sectionHighlight');
+  private highlightKey = new PluginKey('hoverHighlight');
 
   ngOnInit() {
     this.editor = new Editor({
@@ -46,11 +46,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           heading: { levels: [1, 2, 3] },
           bulletList: { keepMarks: true, keepAttributes: true },
           orderedList: { keepMarks: true, keepAttributes: true },
-          dropcursor: { color: false, width: 0, class: 'drop-cursor-box' },
+          dropcursor: { color: false, width: 2, class: 'drop-cursor-box' },
         }),
         BubbleMenu.configure({
           shouldShow: ({ editor, state }) => {
-            // Only show when: editor is focused, text is selected, not in a citation
             if (!editor.isFocused) return false;
             const { from, to } = state.selection;
             return from !== to && !editor.isActive('citation');
@@ -58,7 +57,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         }),
         Citation,
         this.createBackspaceGuard(),
-        this.createSectionHighlight(),
+        this.createHoverHighlight(),
         DragHandle.configure({
           render: () => {
             const el = document.createElement('div');
@@ -71,40 +70,17 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
                 <span class="material-icons">drag_indicator</span>
               </div>
             `;
-            // Fix drag ghost position: cursor at left edge of preview (content to the right)
-            const grip = el.querySelector('.handle-grip') as HTMLElement;
-            grip?.addEventListener('dragstart', (e: DragEvent) => {
-              if (!e.dataTransfer) return;
-              const origSetDragImage = e.dataTransfer.setDragImage.bind(e.dataTransfer);
-              e.dataTransfer.setDragImage = (img: Element, _x: number, _y: number) => {
-                origSetDragImage(img, 0, 10);
-              };
-            }, true);
-            // When mouse leaves drag handle group and doesn't re-enter ProseMirror, clear highlight
-            el.addEventListener('mouseleave', (e) => {
-              const related = (e as MouseEvent).relatedTarget as HTMLElement | null;
-              if (!related || !related.closest('.ProseMirror')) {
-                const current = this.sectionHighlightKey.getState(this.editor.state)?.headingPos ?? -1;
-                if (current >= 0) {
-                  this.editor.view.dispatch(this.editor.state.tr.setMeta(this.sectionHighlightKey, -1));
-                }
-              }
-            });
-            // Wire up copy button — copies the hovered node (section for headings)
+            // Wire up copy button
             el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
               e.stopPropagation();
               const pos = this.resolveHoveredNodePos();
               if (this.hoveredNode && pos >= 0) {
                 const node = this.hoveredNode;
-                // For headings: find section range (heading + everything until next same-level heading)
                 let endPos = pos + node.nodeSize;
                 if (node.type.name === 'heading') {
                   const level = node.attrs['level'];
                   this.editor.state.doc.nodesBetween(pos + node.nodeSize, this.editor.state.doc.content.size, (n: any, p: number) => {
-                    if (n.type.name === 'heading' && n.attrs['level'] <= level) {
-                      endPos = p;
-                      return false;
-                    }
+                    if (n.type.name === 'heading' && n.attrs['level'] <= level) { endPos = p; return false; }
                     return true;
                   });
                 }
@@ -116,9 +92,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             return el;
           },
           onNodeChange: ({ node }) => {
-            // Track the hovered node for copy/drag — lightweight
             this.hoveredNode = node || null;
             this.hoveredNodePos = -1;
+            // Drive the highlight decoration
+            this.updateHighlight(node);
           },
           nested: true,
           onElementDragStart: () => {
@@ -128,29 +105,20 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
               const headingLevel = this.hoveredNode.attrs['level'];
               const startPos = dragPos;
               let endPos = startPos + this.hoveredNode.nodeSize;
-
-              // Find section end: walk doc to find next same/higher-level heading
               const doc = this.editor.state.doc;
               let sectionEndFound = false;
               doc.nodesBetween(startPos + this.hoveredNode.nodeSize, doc.content.size, (n: any, p: number) => {
                 if (sectionEndFound) return false;
-                // Only check top-level nodes (depth 1 from doc)
                 const depth = doc.resolve(p).depth;
-                if (depth !== 0) return true; // skip nested nodes
+                if (depth !== 0) return true;
                 if (n.type.name === 'heading' && n.attrs['level'] <= headingLevel) {
-                  endPos = p;
-                  sectionEndFound = true;
-                  return false;
+                  endPos = p; sectionEndFound = true; return false;
                 }
                 endPos = p + n.nodeSize;
-                return false; // don't descend into this top-level node
+                return false;
               });
               if (!sectionEndFound) endPos = doc.content.size;
-
-              // Select the full section
-              this.editor.chain()
-                .setTextSelection({ from: startPos, to: endPos })
-                .run();
+              this.editor.chain().setTextSelection({ from: startPos, to: endPos }).run();
             }
           },
         }),
@@ -169,69 +137,96 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     // Handle source drops from the panel
     this.editor.view.dom.addEventListener('drop', (e: DragEvent) => {
       const sourceJson = e.dataTransfer?.getData('application/x-scrible-citation');
-      if (!sourceJson) return; // Not a source drop — let TipTap/DragHandle handle it
+      if (!sourceJson) return;
       e.preventDefault();
       e.stopPropagation();
       const source = JSON.parse(sourceJson);
-      // Insert citation at the drop position
       const pos = this.editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
       if (pos) {
-        const citation = this.formatMLA(source);
         this.editor.chain().focus().insertContentAt(pos.pos, {
           type: 'citation',
           attrs: { sourceUrl: source.url, sourceTitle: source.title, sourceAuthor: source.author },
-          content: [{ type: 'text', marks: [{ type: 'italic' }], text: citation }],
+          content: [{ type: 'text', marks: [{ type: 'italic' }], text: this.formatMLA(source) }],
         }).run();
       }
     });
 
     this.editor.view.dom.addEventListener('dragover', (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes('application/x-scrible-citation')) {
-        e.preventDefault(); // Allow drop
-      }
+      if (e.dataTransfer?.types.includes('application/x-scrible-citation')) e.preventDefault();
     });
 
-    // Click on citation node → open source detail
+    // Click on citation → open source detail
     this.editor.on('create', ({ editor }) => {
       editor.view.dom.addEventListener('click', (e: MouseEvent) => {
         const citationEl = (e.target as HTMLElement).closest('.citation-node');
         if (!citationEl) return;
         const sourceUrl = citationEl.getAttribute('data-source-url') || '';
         const source = this.sampleSources.find(s => sourceUrl.includes(s.url) || citationEl.textContent?.includes(s.author));
-        if (source) {
-          this.showPreview = true;
-          this.openSourceDetail(source);
-        }
+        if (source) { this.showPreview = true; this.openSourceDetail(source); }
       });
     });
 
-    // Formatter: runs on blur only (no timer — avoids interference)
+    // Formatter: runs on blur (skip if focus moved to drag handle)
     let isFormatting = false;
     const runFormatter = () => {
       if (isFormatting) return;
       isFormatting = true;
       try {
-        // Remove trailing empty paragraphs (use fresh doc ref each iteration)
         let doc = this.editor.state.doc;
+
+        // 1. Convert bare paragraphs (with text) to list items
+        let bareFound = true;
+        let bareIter = 0;
+        while (bareFound && bareIter < 20) {
+          bareFound = false;
+          bareIter++;
+          doc = this.editor.state.doc;
+          let pos = 0;
+          for (let i = 0; i < doc.childCount; i++) {
+            const child = doc.child(i);
+            if (child.type.name === 'paragraph' && child.textContent.trim()) {
+              // Find the nearest sibling list type
+              let listType = 'bulletList';
+              for (let j = i - 1; j >= 0; j--) {
+                const sib = doc.child(j);
+                if (sib.type.name === 'bulletList' || sib.type.name === 'orderedList') {
+                  listType = sib.type.name; break;
+                }
+              }
+              // Wrap in a new list at the same position
+              const contentJson = child.content.size > 0 ? child.content.toJSON() : [];
+              this.editor.chain()
+                .deleteRange({ from: pos, to: pos + child.nodeSize })
+                .insertContentAt(pos, {
+                  type: listType,
+                  content: [{ type: 'listItem', content: [{ type: 'paragraph', content: contentJson }] }],
+                })
+                .run();
+              bareFound = true;
+              break;
+            }
+            pos += child.nodeSize;
+          }
+        }
+
+        // 2. Remove trailing empty paragraphs
+        doc = this.editor.state.doc;
         let iterations = 0;
         while (doc.lastChild && doc.lastChild.type.name === 'paragraph'
                && doc.lastChild.textContent === '' && doc.childCount > 1 && iterations < 5) {
           const pos = doc.content.size - doc.lastChild.nodeSize;
           this.editor.chain().deleteRange({ from: pos, to: doc.content.size }).run();
-          doc = this.editor.state.doc; // refresh reference
+          doc = this.editor.state.doc;
           iterations++;
         }
 
-        // Remove empty list items (collect positions first, then delete in reverse)
+        // 3. Remove empty list items
         doc = this.editor.state.doc;
         const emptyPositions: number[] = [];
         doc.descendants((node: any, pos: number) => {
-          if (node.type.name === 'listItem' && node.textContent.trim() === '') {
-            emptyPositions.push(pos);
-          }
+          if (node.type.name === 'listItem' && node.textContent.trim() === '') emptyPositions.push(pos);
           return true;
         });
-        // Delete in reverse order to preserve positions
         for (let i = emptyPositions.length - 1; i >= 0; i--) {
           const pos = emptyPositions[i];
           const currentDoc = this.editor.state.doc;
@@ -243,29 +238,22 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           }
         }
 
-        // Fix sequential nesting: a nested list's first item must have a preceding
-        // sibling at the parent level. If not, lift it up one level.
+        // 4. Fix sequential nesting: lift orphaned nested items
         let fixNeeded = true;
-        let fixIterations = 0;
-        while (fixNeeded && fixIterations < 10) {
+        let fixIter = 0;
+        while (fixNeeded && fixIter < 10) {
           fixNeeded = false;
-          fixIterations++;
+          fixIter++;
           doc = this.editor.state.doc;
           doc.descendants((node: any, pos: number) => {
             if (fixNeeded) return false;
             if (node.type.name !== 'listItem') return true;
             const $pos = doc.resolve(pos);
-            // Check if this listItem is inside a nested list (depth >= 4: doc > ul > li > ul > li)
             if ($pos.depth < 4) return true;
-            const parentList = $pos.node($pos.depth - 1); // the ul/ol containing this li
-            const grandparentLi = $pos.node($pos.depth - 2); // should be a listItem
+            const grandparentLi = $pos.node($pos.depth - 2);
             if (grandparentLi?.type.name !== 'listItem') return true;
-            // Check if the parent listItem has content BEFORE the nested list
-            // i.e., the nested list should not be the first child of its parent listItem
-            const parentListIndex = $pos.index($pos.depth - 2); // index of the ul/ol in the grandparent li
+            const parentListIndex = $pos.index($pos.depth - 2);
             if (parentListIndex === 0) {
-              // The nested list is the first child of the parent li — this means
-              // the parent li has no content of its own, just a sublist. Lift this item.
               this.editor.chain().setTextSelection(pos + 1).liftListItem('listItem').run();
               fixNeeded = true;
               return false;
@@ -278,10 +266,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       }
     };
 
-    // Run on blur — skip if focus moved to drag handle (avoids formatting during drag)
     this.editor.on('blur', ({ event }) => {
       const related = (event as FocusEvent)?.relatedTarget as HTMLElement | null;
       if (related?.closest('.drag-handle-group')) return;
+      if (related?.closest('.bubble-toolbar')) return;
       setTimeout(runFormatter, 200);
     });
   }
@@ -295,129 +283,82 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   goBackToSources() { this.selectedSource = null; }
   closePreview() { this.showPreview = false; this.selectedSource = null; }
 
-  /** Prevent Backspace from escaping list items (turning them into paragraphs) */
-  private createBackspaceGuard(): Extension {
-    return Extension.create({
-      name: 'backspaceGuard',
-      addKeyboardShortcuts() {
-        return {
-          'Backspace': ({ editor }) => {
-            const { $from, empty } = editor.state.selection;
-            if (!empty) return false;
-            // Only intercept at the start of a list item's first text position
-            if ($from.parent.type.name !== 'paragraph' && $from.parent.type.name !== 'heading') return false;
-            if ($from.parentOffset !== 0) return false;
-            // Check if we're inside a list item
-            const listItem = $from.node($from.depth - 1);
-            if (listItem?.type.name !== 'listItem') return false;
-            // At the start of a list item — if it's nested, outdent instead of escaping
-            if (editor.can().liftListItem('listItem')) {
-              // Only lift if actually nested (depth > 1 list level)
-              let listDepth = 0;
-              for (let d = $from.depth; d > 0; d--) {
-                if ($from.node(d).type.name === 'listItem') listDepth++;
-              }
-              if (listDepth > 1) {
-                return editor.chain().liftListItem('listItem').run();
-              }
-            }
-            // At top-level list item start — block the backspace
-            return true;
-          },
-        };
-      },
-    });
+  // ── Highlight system ──
+  // Driven by DragHandle's onNodeChange — creates ProseMirror decorations
+  // that survive reconciliation and persist when mouse moves to handle buttons
+
+  private updateHighlight(node: any) {
+    if (!node) {
+      this.editor.view.dispatch(this.editor.state.tr.setMeta(this.highlightKey, { type: 'clear' }));
+      return;
+    }
+    // Find the node's position
+    const pos = this.resolveHoveredNodePos();
+    if (pos < 0) return;
+
+    if (node.type.name === 'heading') {
+      this.editor.view.dispatch(this.editor.state.tr.setMeta(this.highlightKey, { type: 'section', pos, level: node.attrs['level'] }));
+    } else {
+      this.editor.view.dispatch(this.editor.state.tr.setMeta(this.highlightKey, { type: 'node', pos, size: node.nodeSize }));
+    }
   }
 
-  /** Create the SectionHighlight extension (ProseMirror plugin with decorations) */
-  private createSectionHighlight(): Extension {
-    const pluginKey = this.sectionHighlightKey;
-
+  private createHoverHighlight(): Extension {
+    const pluginKey = this.highlightKey;
     return Extension.create({
-      name: 'sectionHighlight',
+      name: 'hoverHighlight',
       addProseMirrorPlugins() {
         return [
           new Plugin({
             key: pluginKey,
             state: {
-              init: () => ({ headingPos: -1 }),
-              apply: (tr, prev) => {
+              init: () => ({ type: 'clear' } as any),
+              apply: (tr: any, prev: any) => {
                 const meta = tr.getMeta(pluginKey);
-                if (meta !== undefined) return { headingPos: meta };
+                if (meta) return meta;
+                if (tr.docChanged && prev.type !== 'clear') return { type: 'clear' };
                 return prev;
               },
             },
             props: {
               decorations: (state) => {
-                const { headingPos } = pluginKey.getState(state) || {};
-                if (headingPos < 0) return DecorationSet.empty;
+                const highlight = pluginKey.getState(state);
+                if (!highlight || highlight.type === 'clear') return DecorationSet.empty;
 
                 const doc = state.doc;
-                const headingNode = doc.nodeAt(headingPos);
-                if (!headingNode || headingNode.type.name !== 'heading') return DecorationSet.empty;
-
-                const headingLevel = headingNode.attrs['level'];
                 const decorations: Decoration[] = [];
 
-                // Highlight the heading itself
-                decorations.push(Decoration.node(headingPos, headingPos + headingNode.nodeSize, {
-                  class: 'section-highlight-heading',
-                }));
+                if (highlight.type === 'node') {
+                  // Single node highlight (list item, citation, paragraph)
+                  const node = doc.nodeAt(highlight.pos);
+                  if (node) {
+                    decorations.push(Decoration.node(highlight.pos, highlight.pos + node.nodeSize, {
+                      class: 'node-highlight',
+                    }));
+                  }
+                } else if (highlight.type === 'section') {
+                  // Heading section: heading + children until next same-level heading
+                  const headingNode = doc.nodeAt(highlight.pos);
+                  if (!headingNode || headingNode.type.name !== 'heading') return DecorationSet.empty;
+                  const headingLevel = headingNode.attrs['level'];
 
-                // Highlight children until next same-level-or-higher heading
-                let pos = headingPos + headingNode.nodeSize;
-                while (pos < doc.content.size) {
-                  const node = doc.nodeAt(pos);
-                  if (!node) break;
-                  if (node.type.name === 'heading' && node.attrs['level'] <= headingLevel) break;
-                  decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-                    class: 'section-highlight',
+                  decorations.push(Decoration.node(highlight.pos, highlight.pos + headingNode.nodeSize, {
+                    class: 'section-highlight-heading',
                   }));
-                  pos += node.nodeSize;
+
+                  let pos = highlight.pos + headingNode.nodeSize;
+                  while (pos < doc.content.size) {
+                    const node = doc.nodeAt(pos);
+                    if (!node) break;
+                    if (node.type.name === 'heading' && node.attrs['level'] <= headingLevel) break;
+                    decorations.push(Decoration.node(pos, pos + node.nodeSize, {
+                      class: 'section-highlight',
+                    }));
+                    pos += node.nodeSize;
+                  }
                 }
 
                 return DecorationSet.create(doc, decorations);
-              },
-              handleDOMEvents: {
-                mousemove: (view, event) => {
-                  const target = event.target as HTMLElement;
-                  // Walk up to find a heading that's a direct child of the editor
-                  let el: HTMLElement | null = target;
-                  const pm = view.dom;
-                  let headingEl: HTMLElement | null = null;
-                  while (el && el !== pm) {
-                    if (/^H[1-3]$/.test(el.tagName) && el.parentElement === pm) {
-                      headingEl = el;
-                      break;
-                    }
-                    el = el.parentElement;
-                  }
-
-                  // Resolve the heading's document position
-                  let newPos = -1;
-                  if (headingEl) {
-                    const domPos = view.posAtDOM(headingEl, 0);
-                    const resolved = view.state.doc.resolve(domPos);
-                    // Walk up to the top-level (depth 1) heading node
-                    newPos = resolved.depth >= 1 ? resolved.before(1) : domPos;
-                  }
-
-                  const current = pluginKey.getState(view.state)?.headingPos ?? -1;
-                  if (newPos !== current) {
-                    view.dispatch(view.state.tr.setMeta(pluginKey, newPos));
-                  }
-                  return false; // don't prevent default
-                },
-                mouseleave: (view, event) => {
-                  // Don't clear highlight if moving to the drag handle group
-                  const related = (event as MouseEvent).relatedTarget as HTMLElement | null;
-                  if (related?.closest('.drag-handle-group')) return false;
-                  const current = pluginKey.getState(view.state)?.headingPos ?? -1;
-                  if (current >= 0) {
-                    view.dispatch(view.state.tr.setMeta(pluginKey, -1));
-                  }
-                  return false;
-                },
               },
             },
           }),
@@ -426,7 +367,33 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     });
   }
 
-  /** Resolve the position of the currently hovered node (lazy — only when needed) */
+  /** Prevent Backspace from escaping list items */
+  private createBackspaceGuard(): Extension {
+    return Extension.create({
+      name: 'backspaceGuard',
+      addKeyboardShortcuts() {
+        return {
+          'Backspace': ({ editor }) => {
+            const { $from, empty } = editor.state.selection;
+            if (!empty) return false;
+            if ($from.parent.type.name !== 'paragraph' && $from.parent.type.name !== 'heading') return false;
+            if ($from.parentOffset !== 0) return false;
+            const listItem = $from.node($from.depth - 1);
+            if (listItem?.type.name !== 'listItem') return false;
+            // Nested → outdent; top-level → block
+            let listDepth = 0;
+            for (let d = $from.depth; d > 0; d--) {
+              if ($from.node(d).type.name === 'listItem') listDepth++;
+            }
+            if (listDepth > 1) return editor.chain().liftListItem('listItem').run();
+            return true;
+          },
+        };
+      },
+    });
+  }
+
+  /** Resolve the position of the currently hovered node (lazy) */
   private resolveHoveredNodePos(): number {
     if (!this.hoveredNode) return -1;
     if (this.hoveredNodePos >= 0) return this.hoveredNodePos;
@@ -449,11 +416,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   // ── Citation ──
   insertCitation(source: any) {
-    const citation = this.formatMLA(source);
     this.editor.chain().focus().insertContent({
       type: 'citation',
       attrs: { sourceUrl: source.url, sourceTitle: source.title, sourceAuthor: source.author },
-      content: [{ type: 'text', marks: [{ type: 'italic' }], text: citation }],
+      content: [{ type: 'text', marks: [{ type: 'italic' }], text: this.formatMLA(source) }],
     }).run();
   }
 
@@ -465,15 +431,13 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     return `${author}. ${title}. ${date}. Web. ${accessed}.`;
   }
 
-  // ── Thumbnails (cached via sessionStorage to avoid re-fetching) ──
+  // ── Thumbnails ──
   private thumbnailCache: Record<string, string> = {};
-
   getThumbnailUrl(url: string): string {
     if (this.thumbnailCache[url]) return this.thumbnailCache[url];
     const cached = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(`thumb:${url}`) : null;
     if (cached) { this.thumbnailCache[url] = cached; return cached; }
     const thumbUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=false&embed=screenshot.url`;
-    // Cache for future use (the URL itself is the cache key — Microlink caches server-side too)
     this.thumbnailCache[url] = thumbUrl;
     if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(`thumb:${url}`, thumbUrl);
     return thumbUrl;
@@ -482,7 +446,6 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   // ── Export ──
   exportToGoogleDoc() {
     const rawHtml = this.editor.getHTML();
-    // Wrap in a styled HTML fragment for better paste into Google Docs
     const styledHtml = `<html><body>
       <style>
         h1 { font-size: 20px; font-weight: bold; }
@@ -492,11 +455,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       </style>
       ${rawHtml}
     </body></html>`;
-    const text = this.editor.getText();
     navigator.clipboard.write([
       new ClipboardItem({
         'text/html': new Blob([styledHtml], { type: 'text/html' }),
-        'text/plain': new Blob([text], { type: 'text/plain' }),
+        'text/plain': new Blob([this.editor.getText()], { type: 'text/plain' }),
       })
     ]).catch(() => {});
     this.showToast();
@@ -510,7 +472,24 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   // ── Toolbar commands ──
   toggleHeading(level: 1 | 2 | 3) {
-    this.editor.chain().focus().toggleHeading({ level }).run();
+    const { $from } = this.editor.state.selection;
+    // If inside a list item, lift out first then convert
+    let inList = false;
+    for (let d = $from.depth; d > 0; d--) {
+      if ($from.node(d).type.name === 'listItem') { inList = true; break; }
+    }
+    if (inList) {
+      // Lift out of all list levels, then toggle heading
+      let chain = this.editor.chain().focus();
+      let liftAttempts = 0;
+      while (this.editor.can().liftListItem('listItem') && liftAttempts < 5) {
+        chain = chain.liftListItem('listItem');
+        liftAttempts++;
+      }
+      chain.toggleHeading({ level }).run();
+    } else {
+      this.editor.chain().focus().toggleHeading({ level }).run();
+    }
   }
 
   isHeadingActive(level: number): boolean {
