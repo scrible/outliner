@@ -338,11 +338,16 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       this.formatterTimer = setTimeout(runFormatter, 300);
     };
 
-    // Run on blur only (skip if focus moved to drag handle or toolbar)
+    // Run on blur (skip if focus moved to drag handle or toolbar)
     this.editor.on('blur', ({ event }) => {
       const related = (event as FocusEvent)?.relatedTarget as HTMLElement | null;
       if (related?.closest('.drag-handle-group, .bubble-toolbar')) return;
       scheduleFormatter();
+    });
+
+    // Run after drop to fix headings that land inside lists
+    this.editor.view.dom.addEventListener('drop', () => {
+      setTimeout(scheduleFormatter, 100);
     });
   }
 
