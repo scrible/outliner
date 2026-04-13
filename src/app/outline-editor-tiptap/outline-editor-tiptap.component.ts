@@ -283,7 +283,36 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           }
         }
 
-        // 4. Fix sequential nesting: lift orphaned nested items
+        // 4. Cap citation indent to 1 level at a time (no skipping depths)
+        doc = this.editor.state.doc;
+        let pos2 = 0;
+        for (let i = 0; i < doc.childCount; i++) {
+          const child = doc.child(i);
+          if (child.type.name === 'citation') {
+            const indent = child.attrs['indent'] || 0;
+            // Citations are top-level block nodes. Max indent = 1 for now
+            // (since they aren't inside lists, they can indent independently)
+            // But enforce max = previous citation's indent + 1
+            if (indent > 1) {
+              // Find previous citation
+              let prevIndent = 0;
+              for (let j = i - 1; j >= 0; j--) {
+                const prev = doc.child(j);
+                if (prev.type.name === 'citation') { prevIndent = prev.attrs['indent'] || 0; break; }
+              }
+              if (indent > prevIndent + 1) {
+                this.editor.chain()
+                  .setTextSelection(pos2 + 1)
+                  .updateAttributes('citation', { indent: prevIndent + 1 })
+                  .run();
+                break; // restart iteration after mutation
+              }
+            }
+          }
+          pos2 += child.nodeSize;
+        }
+
+        // 5. Fix sequential nesting: lift orphaned nested items
         let fixNeeded = true;
         let fixIter = 0;
         while (fixNeeded && fixIter < 10) {
@@ -490,25 +519,48 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   // ── Export ──
   exportToGoogleDoc() {
-    // Build HTML with inline styles (Google Docs strips <style> tags)
+    // Build HTML with inline styles for Google Docs compatibility
+    // Google Docs requires: meta charset, inline styles on every element, no class-based styling
     const rawHtml = this.editor.getHTML();
     const div = document.createElement('div');
     div.innerHTML = rawHtml;
-    // Apply inline styles to every element
-    div.querySelectorAll('h1').forEach(el => { el.setAttribute('style', 'font-size:20px;font-weight:bold;font-family:Arial,sans-serif;'); });
-    div.querySelectorAll('h2').forEach(el => { el.setAttribute('style', 'font-size:16px;font-weight:bold;color:#1d6e82;font-family:Arial,sans-serif;'); });
-    div.querySelectorAll('h3').forEach(el => { el.setAttribute('style', 'font-size:14px;font-weight:bold;font-family:Arial,sans-serif;'); });
+    // Apply inline styles
+    div.querySelectorAll('h1').forEach(el => {
+      el.setAttribute('style', 'font-size:20pt;font-weight:bold;font-family:Arial;margin:16px 0 4px;');
+    });
+    div.querySelectorAll('h2').forEach(el => {
+      el.setAttribute('style', 'font-size:14pt;font-weight:bold;color:#1d6e82;font-family:Arial;margin:12px 0 4px;');
+    });
+    div.querySelectorAll('h3').forEach(el => {
+      el.setAttribute('style', 'font-size:12pt;font-weight:bold;font-family:Arial;margin:8px 0 4px;');
+    });
     div.querySelectorAll('.citation-node, blockquote').forEach(el => {
-      el.setAttribute('style', 'border-left:3px solid #ECB86B;padding:4px 8px;background:#FCF4E9;font-style:italic;color:#78600e;font-size:13px;font-family:Arial,sans-serif;');
+      el.setAttribute('style', 'border-left:3px solid #ECB86B;padding:4px 8px;background-color:#FCF4E9;font-style:italic;color:#78600e;font-size:10pt;font-family:Arial;margin:4px 0 4px 24px;');
     });
-    div.querySelectorAll('p, li').forEach(el => {
-      if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial,sans-serif;font-size:14px;');
+    div.querySelectorAll('ul, ol').forEach(el => {
+      el.setAttribute('style', 'font-family:Arial;font-size:11pt;');
     });
-    const styledHtml = div.innerHTML;
+    div.querySelectorAll('li').forEach(el => {
+      if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial;font-size:11pt;margin:2px 0;');
+    });
+    div.querySelectorAll('p').forEach(el => {
+      if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial;font-size:11pt;margin:2px 0;');
+    });
+    // Remove data- attributes and classes that Google Docs doesn't understand
+    div.querySelectorAll('[data-type]').forEach(el => {
+      el.removeAttribute('data-type');
+      el.removeAttribute('data-source-url');
+      el.removeAttribute('data-source-title');
+      el.removeAttribute('data-source-author');
+      el.removeAttribute('class');
+    });
+    // Wrap in full HTML document fragment for Google Docs
+    const styledHtml = `<meta charset="utf-8"><div style="font-family:Arial;font-size:11pt;">${div.innerHTML}</div>`;
+    const text = this.editor.getText();
     navigator.clipboard.write([
       new ClipboardItem({
         'text/html': new Blob([styledHtml], { type: 'text/html' }),
-        'text/plain': new Blob([this.editor.getText()], { type: 'text/plain' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
       })
     ]).catch(() => {});
     this.showToast();
@@ -523,23 +575,20 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   // ── Toolbar commands ──
   toggleHeading(level: 1 | 2 | 3) {
     const { $from } = this.editor.state.selection;
-    // If inside a list item, lift out first then convert
+    // If inside a list item, lift out of all list levels first
     let inList = false;
     for (let d = $from.depth; d > 0; d--) {
       if ($from.node(d).type.name === 'listItem') { inList = true; break; }
     }
     if (inList) {
-      // Lift out of all list levels, then toggle heading
-      let chain = this.editor.chain().focus();
-      let liftAttempts = 0;
-      while (this.editor.can().liftListItem('listItem') && liftAttempts < 5) {
-        chain = chain.liftListItem('listItem');
-        liftAttempts++;
+      // Each lift must dispatch separately — can() only checks current state
+      let lifts = 0;
+      while (this.editor.can().liftListItem('listItem') && lifts < 5) {
+        this.editor.chain().liftListItem('listItem').run();
+        lifts++;
       }
-      chain.toggleHeading({ level }).run();
-    } else {
-      this.editor.chain().focus().toggleHeading({ level }).run();
     }
+    this.editor.chain().focus().toggleHeading({ level }).run();
   }
 
   isHeadingActive(level: number): boolean {

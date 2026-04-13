@@ -84,8 +84,8 @@ $panel-width: 380px;
       padding: 4px 6px; border-bottom: 2px solid $gray-ddd; border-radius: 4px;
       &:first-child { margin-top: 0; }
     }
-    h2 { font-size: 16px; font-weight: bold; color: $primary; padding: 3px 6px 6px; border-radius: 4px; }
-    h3 { font-size: 14px; font-weight: bold; color: $gray-555; padding: 2px 6px 6px; border-radius: 4px; }
+    h2 { font-size: 16px; font-weight: bold; color: $primary; padding: 3px 6px; border-radius: 4px; }
+    h3 { font-size: 14px; font-weight: bold; color: $gray-555; padding: 2px 6px; border-radius: 4px; }
 
     ol, ul { padding-left: 1.5em; }
     li { margin: 2px 0; padding: 2px 6px; border-radius: 4px; }
@@ -94,8 +94,8 @@ $panel-width: 380px;
     // Citation custom node
     .citation-node {
       border-left: 3px solid $accent-border;
-      padding: 5px 10px;
-      margin: 4px 0 4px 1.5em;
+      padding: 5px 10px 5px 34px; // left padding absorbs the indent (avoids gap where handle disappears)
+      margin: 4px 0;
       background: $accent-light;
       color: #78600e;
       font-size: 13px;
@@ -159,6 +159,7 @@ $panel-width: 380px;
 }
 
 // Hover highlight — ALL driven by ProseMirror decorations (survives reconciliation + handle hover)
+// CRITICAL: no margin or padding changes here — only background, outline, border. Changing layout causes jitter.
 .tiptap-host .ProseMirror {
   // Single-node highlight (list items, citations, paragraphs)
   .node-highlight {
@@ -171,21 +172,20 @@ $panel-width: 380px;
     border-radius: 4px;
     outline: 1px dashed #c0d8de;
     outline-offset: 2px;
-    // Hide H1's bottom border within the highlighted section
-    border-color: transparent !important;
+  }
+  // H1 specifically: hide the border-bottom line when highlighted
+  h1.section-highlight-heading {
+    border-bottom-color: transparent !important;
   }
   // Heading section children
   .section-highlight {
     background: #e4f0f3 !important;
     border-radius: 4px;
   }
-  // Collapse gaps within a highlighted section (overrides > * + * spacing)
-  .section-highlight-heading + .section-highlight {
-    margin-top: -2px !important;
-    padding-top: 2px;
-  }
-  .section-highlight + .section-highlight {
-    margin-top: 0 !important;
+  // Citations inside a section highlight: override amber bg with section bg
+  .citation-node.section-highlight {
+    background: #daedf2 !important; // slightly darker than section to stay visually distinct
+    border-left-color: #a3ccd5 !important;
   }
 
 }
