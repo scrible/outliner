@@ -79,9 +79,17 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
                 let endPos = pos + node.nodeSize;
                 if (node.type.name === 'heading') {
                   const level = node.attrs['level'];
-                  this.editor.state.doc.nodesBetween(pos + node.nodeSize, this.editor.state.doc.content.size, (n: any, p: number) => {
-                    if (n.type.name === 'heading' && n.attrs['level'] <= level) { endPos = p; return false; }
-                    return true;
+                  const doc = this.editor.state.doc;
+                  let found = false;
+                  doc.nodesBetween(pos + node.nodeSize, doc.content.size, (n: any, p: number) => {
+                    if (found) return false;
+                    const depth = doc.resolve(p).depth;
+                    if (depth !== 0) return false; // only check top-level nodes
+                    if (n.type.name === 'heading' && n.attrs['level'] <= level) {
+                      endPos = p; found = true; return false;
+                    }
+                    endPos = p + n.nodeSize;
+                    return false;
                   });
                 }
                 const text = this.editor.state.doc.textBetween(pos, endPos, '\n');
@@ -155,9 +163,18 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       if (e.dataTransfer?.types.includes('application/x-scrible-citation')) e.preventDefault();
     });
 
-    // Click on citation → open source detail
+    // Click on citation → place cursor inside (for Tab indent) + open source detail on double-click
     this.editor.on('create', ({ editor }) => {
       editor.view.dom.addEventListener('click', (e: MouseEvent) => {
+        const citationEl = (e.target as HTMLElement).closest('.citation-node');
+        if (!citationEl) return;
+        // Place cursor inside the citation node for Tab/Shift-Tab to work
+        const pos = editor.view.posAtDOM(citationEl, 0);
+        if (pos >= 0) {
+          editor.chain().setTextSelection(pos).run();
+        }
+      });
+      editor.view.dom.addEventListener('dblclick', (e: MouseEvent) => {
         const citationEl = (e.target as HTMLElement).closest('.citation-node');
         if (!citationEl) return;
         const sourceUrl = citationEl.getAttribute('data-source-url') || '';
@@ -209,7 +226,35 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           }
         }
 
-        // 2. Remove trailing empty paragraphs
+        // 2. Lift headings out of lists (headings should always be top-level)
+        let headingLiftNeeded = true;
+        let headingLiftIter = 0;
+        while (headingLiftNeeded && headingLiftIter < 10) {
+          headingLiftNeeded = false;
+          headingLiftIter++;
+          doc = this.editor.state.doc;
+          doc.descendants((node: any, pos: number) => {
+            if (headingLiftNeeded) return false;
+            if (node.type.name === 'heading') {
+              const $pos = doc.resolve(pos);
+              // If heading is inside a list item (depth > 1), lift it
+              for (let d = $pos.depth; d > 0; d--) {
+                if ($pos.node(d).type.name === 'listItem') {
+                  // Select the heading and lift it out
+                  this.editor.chain()
+                    .setTextSelection({ from: pos, to: pos + node.nodeSize })
+                    .liftListItem('listItem')
+                    .run();
+                  headingLiftNeeded = true;
+                  return false;
+                }
+              }
+            }
+            return true;
+          });
+        }
+
+        // Remove trailing empty paragraphs
         doc = this.editor.state.doc;
         let iterations = 0;
         while (doc.lastChild && doc.lastChild.type.name === 'paragraph'
@@ -445,16 +490,21 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   // ── Export ──
   exportToGoogleDoc() {
+    // Build HTML with inline styles (Google Docs strips <style> tags)
     const rawHtml = this.editor.getHTML();
-    const styledHtml = `<html><body>
-      <style>
-        h1 { font-size: 20px; font-weight: bold; }
-        h2 { font-size: 16px; font-weight: bold; color: #1d6e82; }
-        h3 { font-size: 14px; font-weight: bold; }
-        blockquote, .citation-node { border-left: 3px solid #ECB86B; padding: 4px 8px; background: #FCF4E9; font-style: italic; }
-      </style>
-      ${rawHtml}
-    </body></html>`;
+    const div = document.createElement('div');
+    div.innerHTML = rawHtml;
+    // Apply inline styles to every element
+    div.querySelectorAll('h1').forEach(el => { el.setAttribute('style', 'font-size:20px;font-weight:bold;font-family:Arial,sans-serif;'); });
+    div.querySelectorAll('h2').forEach(el => { el.setAttribute('style', 'font-size:16px;font-weight:bold;color:#1d6e82;font-family:Arial,sans-serif;'); });
+    div.querySelectorAll('h3').forEach(el => { el.setAttribute('style', 'font-size:14px;font-weight:bold;font-family:Arial,sans-serif;'); });
+    div.querySelectorAll('.citation-node, blockquote').forEach(el => {
+      el.setAttribute('style', 'border-left:3px solid #ECB86B;padding:4px 8px;background:#FCF4E9;font-style:italic;color:#78600e;font-size:13px;font-family:Arial,sans-serif;');
+    });
+    div.querySelectorAll('p, li').forEach(el => {
+      if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial,sans-serif;font-size:14px;');
+    });
+    const styledHtml = div.innerHTML;
     navigator.clipboard.write([
       new ClipboardItem({
         'text/html': new Blob([styledHtml], { type: 'text/html' }),
