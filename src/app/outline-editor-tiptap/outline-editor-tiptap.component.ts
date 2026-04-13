@@ -4,8 +4,6 @@ import { Editor, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import BubbleMenu from '@tiptap/extension-bubble-menu';
 import DragHandle from '@tiptap/extension-drag-handle';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
-import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { TiptapEditorDirective, TiptapBubbleMenuDirective, Citation } from '../shared/tiptap';
 
 @Component({
@@ -36,9 +34,34 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   private toastTimer: any = null;
   private hoveredNode: any = null;
-  private hoveredNodePos: number = -1;
-  private highlightKey = new PluginKey('hoverHighlight');
+  private hoveredNodePos = -1;
+  private highlightOverlay: HTMLElement | null = null;
+  private formatterTimer: any = null;
 
+  // ════════════════════════════════════════════════════════════
+  // Shared: find the section range for a heading (heading + children until next same-level)
+  // ════════════════════════════════════════════════════════════
+  private findSectionRange(pos: number, node: any): { from: number; to: number } {
+    const doc = this.editor.state.doc;
+    const level = node.attrs['level'];
+    let endPos = pos + node.nodeSize;
+    let found = false;
+    doc.nodesBetween(pos + node.nodeSize, doc.content.size, (n: any, p: number) => {
+      if (found) return false;
+      if (doc.resolve(p).depth !== 0) return false;
+      if (n.type.name === 'heading' && n.attrs['level'] <= level) {
+        endPos = p; found = true; return false;
+      }
+      endPos = p + n.nodeSize;
+      return false;
+    });
+    if (!found) endPos = doc.content.size;
+    return { from: pos, to: endPos };
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Editor initialization
+  // ════════════════════════════════════════════════════════════
   ngOnInit() {
     this.editor = new Editor({
       extensions: [
@@ -56,93 +79,187 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           },
         }),
         Citation,
-        this.createBackspaceGuard(),
-        this.createHoverHighlight(),
+        this.createKeyboardGuards(),
         DragHandle.configure({
-          render: () => {
-            const el = document.createElement('div');
-            el.classList.add('drag-handle-group');
-            el.innerHTML = `
-              <button class="handle-copy" title="Copy to clipboard" aria-label="Copy element">
-                <span class="material-icons">content_copy</span>
-              </button>
-              <div class="handle-grip" title="Drag to move" aria-label="Drag to reorder">
-                <span class="material-icons">drag_indicator</span>
-              </div>
-            `;
-            // Wire up copy button
-            el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
-              e.stopPropagation();
-              const pos = this.resolveHoveredNodePos();
-              if (this.hoveredNode && pos >= 0) {
-                const node = this.hoveredNode;
-                let endPos = pos + node.nodeSize;
-                if (node.type.name === 'heading') {
-                  const level = node.attrs['level'];
-                  const doc = this.editor.state.doc;
-                  let found = false;
-                  doc.nodesBetween(pos + node.nodeSize, doc.content.size, (n: any, p: number) => {
-                    if (found) return false;
-                    const depth = doc.resolve(p).depth;
-                    if (depth !== 0) return false; // only check top-level nodes
-                    if (n.type.name === 'heading' && n.attrs['level'] <= level) {
-                      endPos = p; found = true; return false;
-                    }
-                    endPos = p + n.nodeSize;
-                    return false;
-                  });
-                }
-                const text = this.editor.state.doc.textBetween(pos, endPos, '\n');
-                navigator.clipboard.writeText(text).catch(() => {});
-                this.showToast();
-              }
-            });
-            return el;
-          },
+          render: () => this.createDragHandleElement(),
           onNodeChange: ({ node }) => {
             this.hoveredNode = node || null;
             this.hoveredNodePos = -1;
-            // Drive the highlight decoration
-            this.updateHighlight(node);
+            this.updateHighlightOverlay(node);
           },
           nested: true,
-          onElementDragStart: () => {
-            // If dragging a heading, expand selection to include the full section
-            const dragPos = this.resolveHoveredNodePos();
-            if (this.hoveredNode?.type.name === 'heading' && dragPos >= 0) {
-              const headingLevel = this.hoveredNode.attrs['level'];
-              const startPos = dragPos;
-              let endPos = startPos + this.hoveredNode.nodeSize;
-              const doc = this.editor.state.doc;
-              let sectionEndFound = false;
-              doc.nodesBetween(startPos + this.hoveredNode.nodeSize, doc.content.size, (n: any, p: number) => {
-                if (sectionEndFound) return false;
-                const depth = doc.resolve(p).depth;
-                if (depth !== 0) return true;
-                if (n.type.name === 'heading' && n.attrs['level'] <= headingLevel) {
-                  endPos = p; sectionEndFound = true; return false;
-                }
-                endPos = p + n.nodeSize;
-                return false;
-              });
-              if (!sectionEndFound) endPos = doc.content.size;
-              this.editor.chain().setTextSelection({ from: startPos, to: endPos }).run();
-            }
-          },
+          onElementDragStart: () => this.expandDragSelection(),
         }),
       ],
       content: this.getDemoContent(),
       editorProps: {
-        attributes: {
-          class: 'outline-content',
-          role: 'textbox',
-          'aria-label': 'Outline editor',
-          'aria-multiline': 'true',
-        },
+        attributes: { class: 'outline-content', role: 'textbox', 'aria-label': 'Outline editor', 'aria-multiline': 'true' },
       },
     });
 
-    // Handle source drops from the panel
+    this.setupSourceDropHandling();
+    this.setupCitationClickHandling();
+    this.setupFormatter();
+  }
+
+  ngOnDestroy() {
+    clearTimeout(this.formatterTimer);
+    this.highlightOverlay?.remove();
+    this.editor?.destroy();
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Highlight overlay — ONE div, positioned via bounding rect union
+  // No ProseMirror decorations, no CSS classes on content, no jitter.
+  // ════════════════════════════════════════════════════════════
+  private updateHighlightOverlay(node: any) {
+    if (!node) { this.clearHighlightOverlay(); return; }
+    const pos = this.resolveHoveredNodePos();
+    if (pos < 0) { this.clearHighlightOverlay(); return; }
+
+    const view = this.editor.view;
+    const doc = this.editor.state.doc;
+    let domElements: Element[] = [];
+
+    if (node.type.name === 'heading') {
+      const { from, to } = this.findSectionRange(pos, node);
+      // Collect all top-level DOM elements in the section
+      let p = from;
+      while (p < to) {
+        const n = doc.nodeAt(p);
+        if (!n) break;
+        const domNode = view.nodeDOM(p);
+        if (domNode instanceof Element) domElements.push(domNode);
+        p += n.nodeSize;
+      }
+    } else {
+      const domNode = view.nodeDOM(pos);
+      if (domNode instanceof Element) domElements.push(domNode);
+    }
+
+    if (domElements.length === 0) { this.clearHighlightOverlay(); return; }
+    this.positionOverlay(domElements, node.type.name === 'heading');
+  }
+
+  private positionOverlay(elements: Element[], isSection: boolean) {
+    const pm = this.editor.view.dom;
+    const pmRect = pm.getBoundingClientRect();
+
+    // Compute union bounding rect of all elements
+    let top = Infinity, bottom = -Infinity;
+    for (const el of elements) {
+      const r = el.getBoundingClientRect();
+      if (r.top < top) top = r.top;
+      if (r.bottom > bottom) bottom = r.bottom;
+    }
+
+    if (!this.highlightOverlay) {
+      this.highlightOverlay = document.createElement('div');
+      this.highlightOverlay.className = 'hover-overlay';
+      pm.parentElement?.appendChild(this.highlightOverlay);
+    }
+
+    const overlay = this.highlightOverlay;
+    const scrollEl = pm.closest('.editor-scroll');
+    const scrollTop = scrollEl?.scrollTop || 0;
+    const containerRect = pm.parentElement!.getBoundingClientRect();
+
+    overlay.style.top = (top - containerRect.top + scrollTop) + 'px';
+    overlay.style.left = (pmRect.left - containerRect.left) + 'px';
+    overlay.style.width = pmRect.width + 'px';
+    overlay.style.height = (bottom - top) + 'px';
+    overlay.style.display = 'block';
+    overlay.classList.toggle('hover-overlay-section', isSection);
+  }
+
+  private clearHighlightOverlay() {
+    if (this.highlightOverlay) this.highlightOverlay.style.display = 'none';
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Drag handle element
+  // ════════════════════════════════════════════════════════════
+  private createDragHandleElement(): HTMLElement {
+    const el = document.createElement('div');
+    el.classList.add('drag-handle-group');
+    el.innerHTML = `
+      <button class="handle-copy" title="Copy to clipboard" aria-label="Copy element">
+        <span class="material-icons">content_copy</span>
+      </button>
+      <div class="handle-grip" title="Drag to move" aria-label="Drag to reorder">
+        <span class="material-icons">drag_indicator</span>
+      </div>
+    `;
+    el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.copyHoveredNode();
+    });
+    // Keep highlight visible when mouse enters the handle
+    el.addEventListener('mouseenter', () => {
+      if (this.hoveredNode) this.updateHighlightOverlay(this.hoveredNode);
+    });
+    el.addEventListener('mouseleave', (e) => {
+      const related = (e as MouseEvent).relatedTarget as HTMLElement | null;
+      if (!related || !related.closest('.ProseMirror')) this.clearHighlightOverlay();
+    });
+    return el;
+  }
+
+  private copyHoveredNode() {
+    const pos = this.resolveHoveredNodePos();
+    if (!this.hoveredNode || pos < 0) return;
+    const node = this.hoveredNode;
+    let endPos = pos + node.nodeSize;
+    if (node.type.name === 'heading') {
+      endPos = this.findSectionRange(pos, node).to;
+    }
+    navigator.clipboard.writeText(this.editor.state.doc.textBetween(pos, endPos, '\n')).catch(() => {});
+    this.showToast();
+  }
+
+  private expandDragSelection() {
+    const dragPos = this.resolveHoveredNodePos();
+    if (this.hoveredNode?.type.name !== 'heading' || dragPos < 0) return;
+    const { from, to } = this.findSectionRange(dragPos, this.hoveredNode);
+    this.editor.chain().setTextSelection({ from, to }).run();
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Keyboard guards
+  // ════════════════════════════════════════════════════════════
+  private createKeyboardGuards(): Extension {
+    return Extension.create({
+      name: 'keyboardGuards',
+      addKeyboardShortcuts() {
+        return {
+          // Backspace: at start of list item, outdent nested or block top-level.
+          // BUT allow deleting empty list items (critical for usability).
+          'Backspace': ({ editor }) => {
+            const { $from, empty } = editor.state.selection;
+            if (!empty) return false;
+            if ($from.parentOffset !== 0) return false;
+            if ($from.parent.type.name !== 'paragraph') return false;
+            const listItem = $from.node($from.depth - 1);
+            if (listItem?.type.name !== 'listItem') return false;
+            // Allow deleting empty list items
+            if (listItem.textContent.trim() === '') return false;
+            // Nested → outdent; top-level → block
+            let listDepth = 0;
+            for (let d = $from.depth; d > 0; d--) {
+              if ($from.node(d).type.name === 'listItem') listDepth++;
+            }
+            if (listDepth > 1) return editor.chain().liftListItem('listItem').run();
+            return true;
+          },
+        };
+      },
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Source drop handling
+  // ════════════════════════════════════════════════════════════
+  private setupSourceDropHandling() {
     this.editor.view.dom.addEventListener('drop', (e: DragEvent) => {
       const sourceJson = e.dataTransfer?.getData('application/x-scrible-citation');
       if (!sourceJson) return;
@@ -158,21 +275,22 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         }).run();
       }
     });
-
     this.editor.view.dom.addEventListener('dragover', (e: DragEvent) => {
       if (e.dataTransfer?.types.includes('application/x-scrible-citation')) e.preventDefault();
     });
+  }
 
-    // Click on citation → place cursor inside (for Tab indent) + open source detail on double-click
+  // ════════════════════════════════════════════════════════════
+  // Citation click handling
+  // ════════════════════════════════════════════════════════════
+  private setupCitationClickHandling() {
     this.editor.on('create', ({ editor }) => {
       editor.view.dom.addEventListener('click', (e: MouseEvent) => {
         const citationEl = (e.target as HTMLElement).closest('.citation-node');
         if (!citationEl) return;
-        // Place cursor inside the citation node for Tab/Shift-Tab to work
+        // Place cursor inside for Tab/Shift-Tab
         const pos = editor.view.posAtDOM(citationEl, 0);
-        if (pos >= 0) {
-          editor.chain().setTextSelection(pos).run();
-        }
+        if (pos >= 0) editor.chain().setTextSelection(pos).run();
       });
       editor.view.dom.addEventListener('dblclick', (e: MouseEvent) => {
         const citationEl = (e.target as HTMLElement).closest('.citation-node');
@@ -182,292 +300,163 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         if (source) { this.showPreview = true; this.openSourceDetail(source); }
       });
     });
+  }
 
-    // Formatter: runs on blur (skip if focus moved to drag handle)
+  // ════════════════════════════════════════════════════════════
+  // Formatter — structural cleanup
+  // Runs on blur (debounced) and after certain editor transactions
+  // ════════════════════════════════════════════════════════════
+  private setupFormatter() {
     let isFormatting = false;
+
     const runFormatter = () => {
-      if (isFormatting) return;
+      if (isFormatting || !this.editor || this.editor.isDestroyed) return;
       isFormatting = true;
       try {
-        let doc = this.editor.state.doc;
-
-        // 1. Convert bare paragraphs (with text) to list items
-        let bareFound = true;
-        let bareIter = 0;
-        while (bareFound && bareIter < 20) {
-          bareFound = false;
-          bareIter++;
-          doc = this.editor.state.doc;
-          let pos = 0;
-          for (let i = 0; i < doc.childCount; i++) {
-            const child = doc.child(i);
-            if (child.type.name === 'paragraph' && child.textContent.trim()) {
-              // Find the nearest sibling list type
-              let listType = 'bulletList';
-              for (let j = i - 1; j >= 0; j--) {
-                const sib = doc.child(j);
-                if (sib.type.name === 'bulletList' || sib.type.name === 'orderedList') {
-                  listType = sib.type.name; break;
-                }
-              }
-              // Wrap in a new list at the same position
-              const contentJson = child.content.size > 0 ? child.content.toJSON() : [];
-              this.editor.chain()
-                .deleteRange({ from: pos, to: pos + child.nodeSize })
-                .insertContentAt(pos, {
-                  type: listType,
-                  content: [{ type: 'listItem', content: [{ type: 'paragraph', content: contentJson }] }],
-                })
-                .run();
-              bareFound = true;
-              break;
-            }
-            pos += child.nodeSize;
-          }
-        }
-
-        // 2. Lift headings out of lists (headings should always be top-level)
-        let headingLiftNeeded = true;
-        let headingLiftIter = 0;
-        while (headingLiftNeeded && headingLiftIter < 10) {
-          headingLiftNeeded = false;
-          headingLiftIter++;
-          doc = this.editor.state.doc;
-          doc.descendants((node: any, pos: number) => {
-            if (headingLiftNeeded) return false;
-            if (node.type.name === 'heading') {
-              const $pos = doc.resolve(pos);
-              // If heading is inside a list item (depth > 1), lift it
-              for (let d = $pos.depth; d > 0; d--) {
-                if ($pos.node(d).type.name === 'listItem') {
-                  // Select the heading and lift it out
-                  this.editor.chain()
-                    .setTextSelection({ from: pos, to: pos + node.nodeSize })
-                    .liftListItem('listItem')
-                    .run();
-                  headingLiftNeeded = true;
-                  return false;
-                }
-              }
-            }
-            return true;
-          });
-        }
-
-        // Remove trailing empty paragraphs
-        doc = this.editor.state.doc;
-        let iterations = 0;
-        while (doc.lastChild && doc.lastChild.type.name === 'paragraph'
-               && doc.lastChild.textContent === '' && doc.childCount > 1 && iterations < 5) {
-          const pos = doc.content.size - doc.lastChild.nodeSize;
-          this.editor.chain().deleteRange({ from: pos, to: doc.content.size }).run();
-          doc = this.editor.state.doc;
-          iterations++;
-        }
-
-        // 3. Remove empty list items
-        doc = this.editor.state.doc;
-        const emptyPositions: number[] = [];
-        doc.descendants((node: any, pos: number) => {
-          if (node.type.name === 'listItem' && node.textContent.trim() === '') emptyPositions.push(pos);
-          return true;
-        });
-        for (let i = emptyPositions.length - 1; i >= 0; i--) {
-          const pos = emptyPositions[i];
-          const currentDoc = this.editor.state.doc;
-          if (pos < currentDoc.content.size) {
-            const node = currentDoc.nodeAt(pos);
-            if (node && node.type.name === 'listItem' && node.textContent.trim() === '') {
-              this.editor.chain().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
-            }
-          }
-        }
-
-        // 4. Cap citation indent to 1 level at a time (no skipping depths)
-        doc = this.editor.state.doc;
-        let pos2 = 0;
-        for (let i = 0; i < doc.childCount; i++) {
-          const child = doc.child(i);
-          if (child.type.name === 'citation') {
-            const indent = child.attrs['indent'] || 0;
-            // Citations are top-level block nodes. Max indent = 1 for now
-            // (since they aren't inside lists, they can indent independently)
-            // But enforce max = previous citation's indent + 1
-            if (indent > 1) {
-              // Find previous citation
-              let prevIndent = 0;
-              for (let j = i - 1; j >= 0; j--) {
-                const prev = doc.child(j);
-                if (prev.type.name === 'citation') { prevIndent = prev.attrs['indent'] || 0; break; }
-              }
-              if (indent > prevIndent + 1) {
-                this.editor.chain()
-                  .setTextSelection(pos2 + 1)
-                  .updateAttributes('citation', { indent: prevIndent + 1 })
-                  .run();
-                break; // restart iteration after mutation
-              }
-            }
-          }
-          pos2 += child.nodeSize;
-        }
-
-        // 5. Fix sequential nesting: lift orphaned nested items
-        let fixNeeded = true;
-        let fixIter = 0;
-        while (fixNeeded && fixIter < 10) {
-          fixNeeded = false;
-          fixIter++;
-          doc = this.editor.state.doc;
-          doc.descendants((node: any, pos: number) => {
-            if (fixNeeded) return false;
-            if (node.type.name !== 'listItem') return true;
-            const $pos = doc.resolve(pos);
-            if ($pos.depth < 4) return true;
-            const grandparentLi = $pos.node($pos.depth - 2);
-            if (grandparentLi?.type.name !== 'listItem') return true;
-            const parentListIndex = $pos.index($pos.depth - 2);
-            if (parentListIndex === 0) {
-              this.editor.chain().setTextSelection(pos + 1).liftListItem('listItem').run();
-              fixNeeded = true;
-              return false;
-            }
-            return true;
-          });
-        }
+        this.formatBareText();
+        this.formatLiftHeadings();
+        this.formatRemoveEmptyTrailing();
+        this.formatRemoveEmptyListItems();
+        this.formatCapCitationIndent();
+        this.formatFixNesting();
       } finally {
         isFormatting = false;
       }
     };
 
+    const scheduleFormatter = () => {
+      clearTimeout(this.formatterTimer);
+      this.formatterTimer = setTimeout(runFormatter, 300);
+    };
+
+    // Run on blur (skip if focus moved to drag handle or toolbar)
     this.editor.on('blur', ({ event }) => {
       const related = (event as FocusEvent)?.relatedTarget as HTMLElement | null;
-      if (related?.closest('.drag-handle-group')) return;
-      if (related?.closest('.bubble-toolbar')) return;
-      setTimeout(runFormatter, 200);
+      if (related?.closest('.drag-handle-group, .bubble-toolbar')) return;
+      scheduleFormatter();
     });
+
+    // Also run after significant edits (debounced)
+    this.editor.on('update', () => scheduleFormatter());
   }
 
-  ngOnDestroy() {
-    this.editor?.destroy();
-  }
-
-  // ── Source panel ──
-  openSourceDetail(source: any) { this.selectedSource = source; }
-  goBackToSources() { this.selectedSource = null; }
-  closePreview() { this.showPreview = false; this.selectedSource = null; }
-
-  // ── Highlight system ──
-  // Driven by DragHandle's onNodeChange — creates ProseMirror decorations
-  // that survive reconciliation and persist when mouse moves to handle buttons
-
-  private updateHighlight(node: any) {
-    if (!node) {
-      this.editor.view.dispatch(this.editor.state.tr.setMeta(this.highlightKey, { type: 'clear' }));
-      return;
-    }
-    // Find the node's position
-    const pos = this.resolveHoveredNodePos();
-    if (pos < 0) return;
-
-    if (node.type.name === 'heading') {
-      this.editor.view.dispatch(this.editor.state.tr.setMeta(this.highlightKey, { type: 'section', pos, level: node.attrs['level'] }));
-    } else {
-      this.editor.view.dispatch(this.editor.state.tr.setMeta(this.highlightKey, { type: 'node', pos, size: node.nodeSize }));
+  private formatBareText() {
+    for (let iter = 0; iter < 20; iter++) {
+      const doc = this.editor.state.doc;
+      let pos = 0, found = false;
+      for (let i = 0; i < doc.childCount; i++) {
+        const child = doc.child(i);
+        if (child.type.name === 'paragraph' && child.textContent.trim()) {
+          let listType = 'bulletList';
+          for (let j = i - 1; j >= 0; j--) {
+            const sib = doc.child(j);
+            if (sib.type.name === 'bulletList' || sib.type.name === 'orderedList') { listType = sib.type.name; break; }
+          }
+          const contentJson = child.content.size > 0 ? child.content.toJSON() : [];
+          this.editor.chain()
+            .deleteRange({ from: pos, to: pos + child.nodeSize })
+            .insertContentAt(pos, { type: listType, content: [{ type: 'listItem', content: [{ type: 'paragraph', content: contentJson }] }] })
+            .run();
+          found = true; break;
+        }
+        pos += child.nodeSize;
+      }
+      if (!found) break;
     }
   }
 
-  private createHoverHighlight(): Extension {
-    const pluginKey = this.highlightKey;
-    return Extension.create({
-      name: 'hoverHighlight',
-      addProseMirrorPlugins() {
-        return [
-          new Plugin({
-            key: pluginKey,
-            state: {
-              init: () => ({ type: 'clear' } as any),
-              apply: (tr: any, prev: any) => {
-                const meta = tr.getMeta(pluginKey);
-                if (meta) return meta;
-                if (tr.docChanged && prev.type !== 'clear') return { type: 'clear' };
-                return prev;
-              },
-            },
-            props: {
-              decorations: (state) => {
-                const highlight = pluginKey.getState(state);
-                if (!highlight || highlight.type === 'clear') return DecorationSet.empty;
-
-                const doc = state.doc;
-                const decorations: Decoration[] = [];
-
-                if (highlight.type === 'node') {
-                  // Single node highlight (list item, citation, paragraph)
-                  const node = doc.nodeAt(highlight.pos);
-                  if (node) {
-                    decorations.push(Decoration.node(highlight.pos, highlight.pos + node.nodeSize, {
-                      class: 'node-highlight',
-                    }));
-                  }
-                } else if (highlight.type === 'section') {
-                  // Heading section: heading + children until next same-level heading
-                  const headingNode = doc.nodeAt(highlight.pos);
-                  if (!headingNode || headingNode.type.name !== 'heading') return DecorationSet.empty;
-                  const headingLevel = headingNode.attrs['level'];
-
-                  decorations.push(Decoration.node(highlight.pos, highlight.pos + headingNode.nodeSize, {
-                    class: 'section-highlight-heading',
-                  }));
-
-                  let pos = highlight.pos + headingNode.nodeSize;
-                  while (pos < doc.content.size) {
-                    const node = doc.nodeAt(pos);
-                    if (!node) break;
-                    if (node.type.name === 'heading' && node.attrs['level'] <= headingLevel) break;
-                    decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-                      class: 'section-highlight',
-                    }));
-                    pos += node.nodeSize;
-                  }
-                }
-
-                return DecorationSet.create(doc, decorations);
-              },
-            },
-          }),
-        ];
-      },
-    });
+  private formatLiftHeadings() {
+    for (let iter = 0; iter < 10; iter++) {
+      const doc = this.editor.state.doc;
+      let lifted = false;
+      doc.descendants((node: any, pos: number) => {
+        if (lifted) return false;
+        if (node.type.name !== 'heading') return true;
+        const $pos = doc.resolve(pos);
+        for (let d = $pos.depth; d > 0; d--) {
+          if ($pos.node(d).type.name === 'listItem') {
+            this.editor.chain().setTextSelection({ from: pos, to: pos + node.nodeSize }).liftListItem('listItem').run();
+            lifted = true; return false;
+          }
+        }
+        return true;
+      });
+      if (!lifted) break;
+    }
   }
 
-  /** Prevent Backspace from escaping list items */
-  private createBackspaceGuard(): Extension {
-    return Extension.create({
-      name: 'backspaceGuard',
-      addKeyboardShortcuts() {
-        return {
-          'Backspace': ({ editor }) => {
-            const { $from, empty } = editor.state.selection;
-            if (!empty) return false;
-            if ($from.parent.type.name !== 'paragraph' && $from.parent.type.name !== 'heading') return false;
-            if ($from.parentOffset !== 0) return false;
-            const listItem = $from.node($from.depth - 1);
-            if (listItem?.type.name !== 'listItem') return false;
-            // Nested → outdent; top-level → block
-            let listDepth = 0;
-            for (let d = $from.depth; d > 0; d--) {
-              if ($from.node(d).type.name === 'listItem') listDepth++;
-            }
-            if (listDepth > 1) return editor.chain().liftListItem('listItem').run();
-            return true;
-          },
-        };
-      },
-    });
+  private formatRemoveEmptyTrailing() {
+    for (let iter = 0; iter < 5; iter++) {
+      const doc = this.editor.state.doc;
+      if (!doc.lastChild || doc.lastChild.type.name !== 'paragraph' || doc.lastChild.textContent !== '' || doc.childCount <= 1) break;
+      this.editor.chain().deleteRange({ from: doc.content.size - doc.lastChild.nodeSize, to: doc.content.size }).run();
+    }
   }
 
-  /** Resolve the position of the currently hovered node (lazy) */
+  private formatRemoveEmptyListItems() {
+    const doc = this.editor.state.doc;
+    const empties: number[] = [];
+    doc.descendants((node: any, pos: number) => {
+      if (node.type.name === 'listItem' && node.textContent.trim() === '') empties.push(pos);
+      return true;
+    });
+    for (let i = empties.length - 1; i >= 0; i--) {
+      const currentDoc = this.editor.state.doc;
+      const pos = empties[i];
+      if (pos >= currentDoc.content.size) continue;
+      const node = currentDoc.nodeAt(pos);
+      if (node?.type.name === 'listItem' && node.textContent.trim() === '') {
+        this.editor.chain().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+      }
+    }
+  }
+
+  private formatCapCitationIndent() {
+    const doc = this.editor.state.doc;
+    let pos = 0;
+    for (let i = 0; i < doc.childCount; i++) {
+      const child = doc.child(i);
+      if (child.type.name === 'citation') {
+        const indent = child.attrs['indent'] || 0;
+        if (indent > 1) {
+          let prevIndent = 0;
+          for (let j = i - 1; j >= 0; j--) {
+            if (doc.child(j).type.name === 'citation') { prevIndent = doc.child(j).attrs['indent'] || 0; break; }
+          }
+          if (indent > prevIndent + 1) {
+            this.editor.chain().setTextSelection(pos + 1).updateAttributes('citation', { indent: prevIndent + 1 }).run();
+            return; // restart on next formatter cycle
+          }
+        }
+      }
+      pos += child.nodeSize;
+    }
+  }
+
+  private formatFixNesting() {
+    for (let iter = 0; iter < 10; iter++) {
+      const doc = this.editor.state.doc;
+      let fixed = false;
+      doc.descendants((node: any, pos: number) => {
+        if (fixed) return false;
+        if (node.type.name !== 'listItem') return true;
+        const $pos = doc.resolve(pos);
+        if ($pos.depth < 4) return true;
+        const grandparentLi = $pos.node($pos.depth - 2);
+        if (grandparentLi?.type.name !== 'listItem') return true;
+        if ($pos.index($pos.depth - 2) === 0) {
+          this.editor.chain().setTextSelection(pos + 1).liftListItem('listItem').run();
+          fixed = true; return false;
+        }
+        return true;
+      });
+      if (!fixed) break;
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Utility
+  // ════════════════════════════════════════════════════════════
   private resolveHoveredNodePos(): number {
     if (!this.hoveredNode) return -1;
     if (this.hoveredNodePos >= 0) return this.hoveredNodePos;
@@ -480,7 +469,16 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     return pos;
   }
 
-  // ── Source drag ──
+  // ════════════════════════════════════════════════════════════
+  // Source panel
+  // ════════════════════════════════════════════════════════════
+  openSourceDetail(source: any) { this.selectedSource = source; }
+  goBackToSources() { this.selectedSource = null; }
+  closePreview() { this.showPreview = false; this.selectedSource = null; }
+
+  // ════════════════════════════════════════════════════════════
+  // Citation
+  // ════════════════════════════════════════════════════════════
   onSourceDragStart(event: DragEvent, source: any) {
     if (!event.dataTransfer) return;
     event.dataTransfer.setData('application/x-scrible-citation', JSON.stringify(source));
@@ -488,9 +486,22 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  // ── Citation ──
   insertCitation(source: any) {
-    this.editor.chain().focus().insertContent({
+    // Insert after the last content node under the first heading, or at end
+    const doc = this.editor.state.doc;
+    let insertPos = doc.content.size;
+    // Find the end of the last non-empty content
+    for (let i = doc.childCount - 1; i >= 0; i--) {
+      const child = doc.child(i);
+      if (child.textContent.trim() || child.type.name === 'citation') {
+        // Insert after this node
+        let p = 0;
+        for (let j = 0; j <= i; j++) p += doc.child(j).nodeSize;
+        insertPos = p;
+        break;
+      }
+    }
+    this.editor.chain().focus().insertContentAt(insertPos, {
       type: 'citation',
       attrs: { sourceUrl: source.url, sourceTitle: source.title, sourceAuthor: source.author },
       content: [{ type: 'text', marks: [{ type: 'italic' }], text: this.formatMLA(source) }],
@@ -505,7 +516,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     return `${author}. ${title}. ${date}. Web. ${accessed}.`;
   }
 
-  // ── Thumbnails ──
+  // ════════════════════════════════════════════════════════════
+  // Thumbnails
+  // ════════════════════════════════════════════════════════════
   private thumbnailCache: Record<string, string> = {};
   getThumbnailUrl(url: string): string {
     if (this.thumbnailCache[url]) return this.thumbnailCache[url];
@@ -517,50 +530,30 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     return thumbUrl;
   }
 
-  // ── Export ──
+  // ════════════════════════════════════════════════════════════
+  // Export — inline styles for Google Docs
+  // ════════════════════════════════════════════════════════════
   exportToGoogleDoc() {
-    // Build HTML with inline styles for Google Docs compatibility
-    // Google Docs requires: meta charset, inline styles on every element, no class-based styling
     const rawHtml = this.editor.getHTML();
     const div = document.createElement('div');
     div.innerHTML = rawHtml;
-    // Apply inline styles
-    div.querySelectorAll('h1').forEach(el => {
-      el.setAttribute('style', 'font-size:20pt;font-weight:bold;font-family:Arial;margin:16px 0 4px;');
-    });
-    div.querySelectorAll('h2').forEach(el => {
-      el.setAttribute('style', 'font-size:14pt;font-weight:bold;color:#1d6e82;font-family:Arial;margin:12px 0 4px;');
-    });
-    div.querySelectorAll('h3').forEach(el => {
-      el.setAttribute('style', 'font-size:12pt;font-weight:bold;font-family:Arial;margin:8px 0 4px;');
-    });
+    // Inline styles on every element (Google Docs strips <style> tags and classes)
+    div.querySelectorAll('h1').forEach(el => el.setAttribute('style', 'font-size:20pt;font-weight:bold;font-family:Arial;'));
+    div.querySelectorAll('h2').forEach(el => el.setAttribute('style', 'font-size:14pt;font-weight:bold;color:#1d6e82;font-family:Arial;'));
+    div.querySelectorAll('h3').forEach(el => el.setAttribute('style', 'font-size:12pt;font-weight:bold;font-family:Arial;'));
     div.querySelectorAll('.citation-node, blockquote').forEach(el => {
-      el.setAttribute('style', 'border-left:3px solid #ECB86B;padding:4px 8px;background-color:#FCF4E9;font-style:italic;color:#78600e;font-size:10pt;font-family:Arial;margin:4px 0 4px 24px;');
-    });
-    div.querySelectorAll('ul, ol').forEach(el => {
-      el.setAttribute('style', 'font-family:Arial;font-size:11pt;');
-    });
-    div.querySelectorAll('li').forEach(el => {
-      if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial;font-size:11pt;margin:2px 0;');
-    });
-    div.querySelectorAll('p').forEach(el => {
-      if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial;font-size:11pt;margin:2px 0;');
-    });
-    // Remove data- attributes and classes that Google Docs doesn't understand
-    div.querySelectorAll('[data-type]').forEach(el => {
-      el.removeAttribute('data-type');
-      el.removeAttribute('data-source-url');
-      el.removeAttribute('data-source-title');
-      el.removeAttribute('data-source-author');
+      el.setAttribute('style', 'border-left:3px solid #ECB86B;padding:4px 8px;background-color:#FCF4E9;font-style:italic;color:#78600e;font-size:10pt;font-family:Arial;margin-left:24px;');
       el.removeAttribute('class');
+      ['data-type', 'data-source-url', 'data-source-title', 'data-source-author'].forEach(a => el.removeAttribute(a));
     });
-    // Wrap in full HTML document fragment for Google Docs
-    const styledHtml = `<meta charset="utf-8"><div style="font-family:Arial;font-size:11pt;">${div.innerHTML}</div>`;
-    const text = this.editor.getText();
+    div.querySelectorAll('ul, ol').forEach(el => el.setAttribute('style', 'font-family:Arial;font-size:11pt;'));
+    div.querySelectorAll('li').forEach(el => { if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial;font-size:11pt;'); });
+    div.querySelectorAll('p').forEach(el => { if (!el.getAttribute('style')) el.setAttribute('style', 'font-family:Arial;font-size:11pt;'); });
+    const styledHtml = `<meta charset="utf-8">${div.innerHTML}`;
     navigator.clipboard.write([
       new ClipboardItem({
         'text/html': new Blob([styledHtml], { type: 'text/html' }),
-        'text/plain': new Blob([text], { type: 'text/plain' }),
+        'text/plain': new Blob([this.editor.getText()], { type: 'text/plain' }),
       })
     ]).catch(() => {});
     this.showToast();
@@ -572,16 +565,16 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     this.toastTimer = setTimeout(() => { this.exportToastVisible = false; }, 8000);
   }
 
-  // ── Toolbar commands ──
+  // ════════════════════════════════════════════════════════════
+  // Toolbar
+  // ════════════════════════════════════════════════════════════
   toggleHeading(level: 1 | 2 | 3) {
     const { $from } = this.editor.state.selection;
-    // If inside a list item, lift out of all list levels first
     let inList = false;
     for (let d = $from.depth; d > 0; d--) {
       if ($from.node(d).type.name === 'listItem') { inList = true; break; }
     }
     if (inList) {
-      // Each lift must dispatch separately — can() only checks current state
       let lifts = 0;
       while (this.editor.can().liftListItem('listItem') && lifts < 5) {
         this.editor.chain().liftListItem('listItem').run();
@@ -595,7 +588,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     return this.editor?.isActive('heading', { level }) || false;
   }
 
-  // ── Demo content ──
+  // ════════════════════════════════════════════════════════════
+  // Demo content
+  // ════════════════════════════════════════════════════════════
   private getDemoContent() {
     return {
       type: 'doc',
@@ -603,22 +598,15 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Mars Colonization: Economic Feasibility Study' }] },
         { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Thesis' }] },
         { type: 'bulletList', content: [
-          { type: 'listItem', content: [
-            { type: 'paragraph', content: [{ type: 'text', text: 'The rapid advancement of reusable rocket technology has fundamentally altered the economic landscape of space exploration, making Mars colonization a realistic near-term goal.' }] },
-          ]},
+          { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'The rapid advancement of reusable rocket technology has fundamentally altered the economic landscape of space exploration, making Mars colonization a realistic near-term goal.' }] }] },
         ]},
         { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Background' }] },
         { type: 'bulletList', content: [
-          { type: 'listItem', content: [
-            { type: 'paragraph', content: [{ type: 'text', text: 'NASA\'s Mars Exploration Program has systematically studied Mars since the 1990s with rovers, orbiters, and landers.' }] },
-          ]},
-          { type: 'listItem', content: [
-            { type: 'paragraph', content: [{ type: 'text', text: 'The Perseverance rover (2021) is designed to search for ancient microbial life and collect samples for Earth return.' }] },
-          ]},
+          { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'NASA\'s Mars Exploration Program has systematically studied Mars since the 1990s with rovers, orbiters, and landers.' }] }] },
+          { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'The Perseverance rover (2021) is designed to search for ancient microbial life and collect samples for Earth return.' }] }] },
         ]},
         { type: 'citation', attrs: { sourceUrl: 'https://science.nasa.gov/mission/mars-2020-perseverance/', sourceTitle: 'Mars 2020 Perseverance Rover', sourceAuthor: 'NASA' },
-          content: [{ type: 'text', marks: [{ type: 'italic' }], text: 'NASA. \u201cMars 2020 Perseverance Rover.\u201d science.nasa.gov, 2024. Web.' }],
-        },
+          content: [{ type: 'text', marks: [{ type: 'italic' }], text: 'NASA. \u201cMars 2020 Perseverance Rover.\u201d science.nasa.gov, 2024. Web.' }] },
         { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Economic Feasibility' }] },
         { type: 'orderedList', content: [
           { type: 'listItem', content: [
@@ -638,9 +626,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         ]},
         { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Conclusion' }] },
         { type: 'bulletList', content: [
-          { type: 'listItem', content: [
-            { type: 'paragraph', content: [{ type: 'text', text: 'The convergence of reduced launch costs, advancing life support, and international collaboration suggests a permanent Mars presence is achievable within two decades.' }] },
-          ]},
+          { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'The convergence of reduced launch costs, advancing life support, and international collaboration suggests a permanent Mars presence is achievable within two decades.' }] }] },
         ]},
       ],
     };

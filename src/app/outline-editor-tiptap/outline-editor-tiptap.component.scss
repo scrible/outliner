@@ -158,36 +158,21 @@ $panel-width: 380px;
   &:active { cursor: grabbing; }
 }
 
-// Hover highlight — ALL driven by ProseMirror decorations (survives reconciliation + handle hover)
-// CRITICAL: no margin or padding changes here — only background, outline, border. Changing layout causes jitter.
-.tiptap-host .ProseMirror {
-  // Single-node highlight (list items, citations, paragraphs)
-  .node-highlight {
-    background: #e4f0f3 !important;
-    border-radius: 4px;
-  }
-  // Heading section highlight — heading gets dashed outline
-  .section-highlight-heading {
-    background: #e4f0f3 !important;
-    border-radius: 4px;
-    outline: 1px dashed #c0d8de;
+// Hover highlight — ONE overlay div positioned via bounding rect union.
+// No ProseMirror decorations, no CSS classes on content elements, zero jitter.
+.hover-overlay {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 1;
+  background: rgba(29, 110, 130, 0.06);
+  border-radius: 4px;
+  transition: top 80ms ease, height 80ms ease;
+
+  &.hover-overlay-section {
+    outline: 1px dashed rgba(29, 110, 130, 0.2);
     outline-offset: 2px;
   }
-  // H1 specifically: hide the border-bottom line when highlighted
-  h1.section-highlight-heading {
-    border-bottom-color: transparent !important;
-  }
-  // Heading section children
-  .section-highlight {
-    background: #e4f0f3 !important;
-    border-radius: 4px;
-  }
-  // Citations inside a section highlight: override amber bg with section bg
-  .citation-node.section-highlight {
-    background: #daedf2 !important; // slightly darker than section to stay visually distinct
-    border-left-color: #a3ccd5 !important;
-  }
-
 }
 
 // Bubble toolbar (floating menu on text selection)
