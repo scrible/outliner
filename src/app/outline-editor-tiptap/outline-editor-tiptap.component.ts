@@ -156,16 +156,18 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     if (!this.highlightOverlay) {
       this.highlightOverlay = document.createElement('div');
       this.highlightOverlay.className = 'hover-overlay';
-      pm.parentElement?.appendChild(this.highlightOverlay);
+      // Append to .editor-wrapper (the positioned ancestor) for correct absolute positioning
+      const wrapper = pm.closest('.editor-wrapper') || pm.parentElement;
+      wrapper?.appendChild(this.highlightOverlay);
     }
 
     const overlay = this.highlightOverlay;
-    const scrollEl = pm.closest('.editor-scroll');
-    const scrollTop = scrollEl?.scrollTop || 0;
-    const containerRect = pm.parentElement!.getBoundingClientRect();
+    // Position relative to .editor-wrapper (the positioned ancestor)
+    const wrapper = pm.closest('.editor-wrapper') as HTMLElement;
+    const wrapperRect = wrapper.getBoundingClientRect();
 
-    overlay.style.top = (top - containerRect.top + scrollTop) + 'px';
-    overlay.style.left = (pmRect.left - containerRect.left) + 'px';
+    overlay.style.top = (top - wrapperRect.top) + 'px';
+    overlay.style.left = (pmRect.left - wrapperRect.left) + 'px';
     overlay.style.width = pmRect.width + 'px';
     overlay.style.height = (bottom - top) + 'px';
     overlay.style.display = 'block';
@@ -190,6 +192,13 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         <span class="material-icons">drag_indicator</span>
       </div>
     `;
+    // Fix drag ghost: position content to right of cursor (not centered)
+    el.querySelector('.handle-grip')?.addEventListener('dragstart', (e: Event) => {
+      const de = e as DragEvent;
+      if (!de.dataTransfer) return;
+      const orig = de.dataTransfer.setDragImage.bind(de.dataTransfer);
+      de.dataTransfer.setDragImage = (img: Element, _x: number, _y: number) => orig(img, 0, 10);
+    }, true);
     el.querySelector('.handle-copy')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.copyHoveredNode();
@@ -329,15 +338,12 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       this.formatterTimer = setTimeout(runFormatter, 300);
     };
 
-    // Run on blur (skip if focus moved to drag handle or toolbar)
+    // Run on blur only (skip if focus moved to drag handle or toolbar)
     this.editor.on('blur', ({ event }) => {
       const related = (event as FocusEvent)?.relatedTarget as HTMLElement | null;
       if (related?.closest('.drag-handle-group, .bubble-toolbar')) return;
       scheduleFormatter();
     });
-
-    // Also run after significant edits (debounced)
-    this.editor.on('update', () => scheduleFormatter());
   }
 
   private formatBareText() {
