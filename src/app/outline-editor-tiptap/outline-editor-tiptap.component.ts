@@ -38,6 +38,21 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   private highlightOverlay: HTMLElement | null = null;
   private citationDropPreview: HTMLElement | null = null;
   private formatterTimer: any = null;
+  private sectionDrag: {
+    sectionFrom: number;
+    sectionTo: number;
+    sectionNodes: any[];
+    headingLevel: number;
+    floatingClone: HTMLElement;
+    dropIndicator: HTMLElement;
+    currentDropPos: number;
+    startY: number;
+    active: boolean;
+    greyedEls: HTMLElement[];
+    boundMouseMove: (e: MouseEvent) => void;
+    boundMouseUp: (e: MouseEvent) => void;
+    boundKeyDown: (e: KeyboardEvent) => void;
+  } | null = null;
 
   // ════════════════════════════════════════════════════════════
   // Shared: find the section range for a heading (heading + children until next same-level)
@@ -87,53 +102,27 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
             this.hoveredNode = node || null;
             this.hoveredNodePos = -1;
             this.updateHighlightOverlay(node);
+            // Reveal the wrapper on first real hover (hidden on load to prevent 0,0 flash)
+            if (node && this.dragHandleWrapper?.style.display === 'none') {
+              this.dragHandleWrapper.style.display = '';
+            }
           },
           nested: true,
-          onElementDragStart: () => this.expandDragSelection(),
         }),
       ],
       content: this.getDemoContent(),
       editorProps: {
         attributes: { class: 'outline-content', role: 'textbox', 'aria-label': 'Outline editor', 'aria-multiline': 'true' },
-        handleDrop: (view, event, slice, moved) => {
-          if (!moved || !slice) return false;
-          // Check if the dragged content contains a heading
-          let hasHeading = false;
-          slice.content.forEach((node: any) => { if (node.type.name === 'heading') hasHeading = true; });
-          if (!hasHeading) return false;
-
-          // Snap drop position to the nearest top-level node boundary
-          const coords = { left: event.clientX, top: event.clientY };
-          const posInfo = view.posAtCoords(coords);
-          if (!posInfo) return false;
-
-          const doc = view.state.doc;
-          const $pos = doc.resolve(posInfo.pos);
-
-          // Walk up to top-level depth, then find the nearest boundary (before or after)
-          let topPos = posInfo.pos;
-          if ($pos.depth > 0) {
-            const topNode = $pos.node(1);
-            const topStart = $pos.before(1);
-            const topEnd = topStart + topNode.nodeSize;
-            // Snap to whichever boundary (before/after) is closer to the cursor
-            const startCoords = view.coordsAtPos(topStart);
-            const endCoords = view.coordsAtPos(topEnd);
-            topPos = Math.abs(event.clientY - startCoords.top) < Math.abs(event.clientY - endCoords.bottom) ? topStart : topEnd;
-          }
-
-          // Delete the source, then insert at the snapped position
-          const { from, to } = view.state.selection;
-          const tr = view.state.tr;
-          tr.delete(from, to);
-          // Adjust insertion position if it was after the deleted range
-          const insertPos = topPos > from ? topPos - (to - from) : topPos;
-          tr.insert(Math.min(insertPos, tr.doc.content.size), slice.content);
-          view.dispatch(tr);
-          return true;
-        },
       },
     });
+
+    // Hide the drag handle wrapper on load — the plugin positions it at 0,0
+    // before any mouse interaction. We show it on the first onNodeChange.
+    const handleGroup = this.editor.view.dom.parentElement?.querySelector('.drag-handle-group');
+    if (handleGroup?.parentElement) {
+      this.dragHandleWrapper = handleGroup.parentElement as HTMLElement;
+      this.dragHandleWrapper.style.display = 'none';
+    }
 
     this.setupSourceDropHandling();
     this.setupCitationClickHandling();
@@ -142,7 +131,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     clearTimeout(this.formatterTimer);
+    if (this.sectionDrag) this.cleanupSectionDrag();
     this.highlightOverlay?.remove();
+    this.citationDropPreview?.remove();
     this.editor?.destroy();
   }
 
@@ -219,6 +210,8 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   // ════════════════════════════════════════════════════════════
   // Drag handle element
   // ════════════════════════════════════════════════════════════
+  private dragHandleWrapper: HTMLElement | null = null;
+
   private createDragHandleElement(): HTMLElement {
     const el = document.createElement('div');
     el.classList.add('drag-handle-group');
@@ -230,8 +223,22 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         <span class="material-icons">drag_indicator</span>
       </div>
     `;
-    // Fix drag ghost: position content to right of cursor (not centered)
-    el.querySelector('.handle-grip')?.addEventListener('dragstart', (e: Event) => {
+    const grip = el.querySelector('.handle-grip')!;
+
+    // Custom section drag for headings — intercepts before HTML5 drag can start
+    grip.addEventListener('mousedown', (e: Event) => {
+      if (this.hoveredNode?.type.name === 'heading') {
+        this.startSectionDrag(e as MouseEvent);
+      }
+    });
+
+    // Prevent HTML5 drag for headings (startSectionDrag handles them via mousedown)
+    grip.addEventListener('dragstart', (e: Event) => {
+      if (this.sectionDrag) {
+        e.preventDefault();
+        return;
+      }
+      // Fix drag ghost for non-heading items: position content to right of cursor
       const de = e as DragEvent;
       if (!de.dataTransfer) return;
       const orig = de.dataTransfer.setDragImage.bind(de.dataTransfer);
@@ -264,11 +271,230 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     this.showToast();
   }
 
-  private expandDragSelection() {
-    const dragPos = this.resolveHoveredNodePos();
-    if (this.hoveredNode?.type.name !== 'heading' || dragPos < 0) return;
-    const { from, to } = this.findSectionRange(dragPos, this.hoveredNode);
-    this.editor.chain().setTextSelection({ from, to }).run();
+  // ════════════════════════════════════════════════════════════
+  // Section drag — custom mousedown/mousemove/mouseup system for headings
+  // Bypasses HTML5 drag entirely. Non-heading items use default DragHandle.
+  // ════════════════════════════════════════════════════════════
+  private startSectionDrag(e: MouseEvent) {
+    const pos = this.resolveHoveredNodePos();
+    if (!this.hoveredNode || this.hoveredNode.type.name !== 'heading' || pos < 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const { from, to } = this.findSectionRange(pos, this.hoveredNode);
+    const doc = this.editor.state.doc;
+    const view = this.editor.view;
+
+    // Snapshot section nodes as JSON
+    const nodes: any[] = [];
+    let p = from;
+    while (p < to) {
+      const n = doc.nodeAt(p);
+      if (!n) break;
+      nodes.push(n.toJSON());
+      p += n.nodeSize;
+    }
+
+    // Grey out the original section DOM elements
+    const greyedEls: HTMLElement[] = [];
+    p = from;
+    while (p < to) {
+      const n = doc.nodeAt(p);
+      if (!n) break;
+      const dom = view.nodeDOM(p);
+      if (dom instanceof HTMLElement) {
+        dom.classList.add('section-dragging');
+        greyedEls.push(dom);
+      }
+      p += n.nodeSize;
+    }
+
+    // Create floating clone (heading text pill)
+    const pm = view.dom;
+    const wrapper = pm.closest('.editor-wrapper') as HTMLElement;
+    const wrapperRect = wrapper.getBoundingClientRect();
+
+    const clone = document.createElement('div');
+    clone.className = 'section-drag-clone';
+    clone.textContent = this.hoveredNode.textContent;
+    clone.style.display = 'none';
+    wrapper.appendChild(clone);
+
+    // Create drop indicator
+    const indicator = document.createElement('div');
+    indicator.className = 'section-drop-indicator';
+    wrapper.appendChild(indicator);
+
+    // Lock drag handle so the plugin doesn't interfere
+    this.editor.view.dispatch(this.editor.state.tr.setMeta('lockDragHandle', true));
+    this.clearHighlightOverlay();
+
+    // Bind event handlers
+    const boundMouseMove = (ev: MouseEvent) => this.updateSectionDrag(ev);
+    const boundMouseUp = (ev: MouseEvent) => this.commitSectionDrag();
+    const boundKeyDown = (ev: KeyboardEvent) => { if (ev.key === 'Escape') this.cancelSectionDrag(); };
+
+    document.addEventListener('mousemove', boundMouseMove);
+    document.addEventListener('mouseup', boundMouseUp);
+    document.addEventListener('keydown', boundKeyDown);
+
+    this.sectionDrag = {
+      sectionFrom: from,
+      sectionTo: to,
+      sectionNodes: nodes,
+      headingLevel: this.hoveredNode.attrs['level'],
+      floatingClone: clone,
+      dropIndicator: indicator,
+      currentDropPos: -1,
+      startY: e.clientY,
+      active: false,
+      greyedEls,
+      boundMouseMove,
+      boundMouseUp,
+      boundKeyDown,
+    };
+  }
+
+  private updateSectionDrag(e: MouseEvent) {
+    if (!this.sectionDrag) return;
+    const drag = this.sectionDrag;
+
+    // Dead zone: require 4px movement before activating
+    if (!drag.active) {
+      if (Math.abs(e.clientY - drag.startY) < 4) return;
+      drag.active = true;
+      drag.floatingClone.style.display = '';
+      drag.dropIndicator.style.display = 'block';
+    }
+
+    const view = this.editor.view;
+    const pm = view.dom;
+    const wrapper = pm.closest('.editor-wrapper') as HTMLElement;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const pmRect = pm.getBoundingClientRect();
+
+    // Position floating clone near cursor
+    drag.floatingClone.style.top = (e.clientY - wrapperRect.top - 14) + 'px';
+    drag.floatingClone.style.left = (pmRect.left - wrapperRect.left + 20) + 'px';
+
+    // Find nearest section gap via bounding rects.
+    // Group headings at the SAME level as the dragged heading into sections.
+    // Headings at other levels and non-heading nodes are standalone unless
+    // they're children of a same-level heading's section.
+    const doc = this.editor.state.doc;
+    const dragLevel = drag.headingLevel;
+    const sections: { from: number; to: number }[] = [];
+    let pos = 0;
+    for (let i = 0; i < doc.childCount; i++) {
+      const child = doc.child(i);
+      const nodeStart = pos;
+      pos += child.nodeSize;
+      if (child.type.name === 'heading' && child.attrs['level'] === dragLevel) {
+        // Same-level heading: group it with its children
+        const range = this.findSectionRange(nodeStart, child);
+        sections.push(range);
+        while (i + 1 < doc.childCount && pos < range.to) {
+          i++;
+          pos += doc.child(i).nodeSize;
+        }
+      } else if (sections.length === 0 || nodeStart >= sections[sections.length - 1].to) {
+        // Standalone node (not part of a same-level heading's section)
+        sections.push({ from: nodeStart, to: nodeStart + child.nodeSize });
+      }
+    }
+
+    // Build boundaries at section edges, skipping the dragged section
+    const boundaries: { y: number; pos: number }[] = [];
+    for (const sec of sections) {
+      if (sec.from >= drag.sectionFrom && sec.from < drag.sectionTo) continue;
+      // Get bounding rect union for all DOM elements in this section
+      let secTop = Infinity, secBottom = -Infinity;
+      let p = sec.from;
+      while (p < sec.to) {
+        const n = doc.nodeAt(p);
+        if (!n) break;
+        const dom = view.nodeDOM(p);
+        if (dom instanceof HTMLElement) {
+          const rect = dom.getBoundingClientRect();
+          if (rect.top < secTop) secTop = rect.top;
+          if (rect.bottom > secBottom) secBottom = rect.bottom;
+        }
+        p += n.nodeSize;
+      }
+      if (secTop === Infinity) continue;
+      if (boundaries.length === 0) boundaries.push({ y: secTop, pos: sec.from });
+      boundaries.push({ y: secBottom, pos: sec.to });
+    }
+
+    if (boundaries.length === 0) return;
+
+    let best = boundaries[0];
+    for (const b of boundaries) {
+      if (Math.abs(b.y - e.clientY) < Math.abs(best.y - e.clientY)) best = b;
+    }
+    drag.currentDropPos = best.pos;
+
+    // Position drop indicator at the gap
+    drag.dropIndicator.style.top = (best.y - wrapperRect.top) + 'px';
+    drag.dropIndicator.style.left = (pmRect.left - wrapperRect.left) + 'px';
+    drag.dropIndicator.style.width = pmRect.width + 'px';
+  }
+
+  private commitSectionDrag() {
+    if (!this.sectionDrag || !this.sectionDrag.active) {
+      this.cancelSectionDrag();
+      return;
+    }
+    const drag = this.sectionDrag;
+    let dropPos = drag.currentDropPos;
+
+    // Don't move to same position
+    if (dropPos < 0 || dropPos === drag.sectionFrom || dropPos === drag.sectionTo) {
+      this.cancelSectionDrag();
+      return;
+    }
+
+    // Single transaction: delete source, insert at target
+    const schema = this.editor.state.schema;
+    const sectionNodes = drag.sectionNodes.map((json: any) => schema.nodeFromJSON(json));
+    const tr = this.editor.state.tr;
+    tr.delete(drag.sectionFrom, drag.sectionTo);
+    if (dropPos > drag.sectionFrom) dropPos -= (drag.sectionTo - drag.sectionFrom);
+    const insertAt = Math.max(0, Math.min(dropPos, tr.doc.content.size));
+    for (let i = sectionNodes.length - 1; i >= 0; i--) {
+      tr.insert(insertAt, sectionNodes[i]);
+    }
+    this.editor.view.dispatch(tr);
+    this.editor.view.focus();
+
+    this.cleanupSectionDrag();
+  }
+
+  private cancelSectionDrag() {
+    this.cleanupSectionDrag();
+  }
+
+  private cleanupSectionDrag() {
+    if (!this.sectionDrag) return;
+    const drag = this.sectionDrag;
+
+    // Remove greyed-out styling
+    for (const el of drag.greyedEls) el.classList.remove('section-dragging');
+
+    // Remove floating clone and drop indicator
+    drag.floatingClone.remove();
+    drag.dropIndicator.remove();
+
+    // Unbind event handlers
+    document.removeEventListener('mousemove', drag.boundMouseMove);
+    document.removeEventListener('mouseup', drag.boundMouseUp);
+    document.removeEventListener('keydown', drag.boundKeyDown);
+
+    // Unlock drag handle
+    this.editor.view.dispatch(this.editor.state.tr.setMeta('lockDragHandle', false));
+
+    this.sectionDrag = null;
   }
 
   // ════════════════════════════════════════════════════════════
@@ -357,7 +583,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     let isFormatting = false;
 
     const runFormatter = () => {
-      if (isFormatting || !this.editor || this.editor.isDestroyed) return;
+      if (isFormatting || !this.editor || this.editor.isDestroyed || this.sectionDrag) return;
       isFormatting = true;
       try {
         this.formatBareText();
@@ -371,14 +597,8 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       }
     };
 
-    // ── EXPERIMENTAL: global 8-second idle formatter ──────────────────
-    // On blur, start an 8-second timer that runs the formatter.
-    // Any focus event anywhere in the editor tree cancels the timer.
-    // This replaces the old 300ms debounce-on-blur approach which only
-    // fired reliably after mouseup on the drag handle.
-    // If this doesn't work well in practice, blow this whole block away
-    // and try a different trigger strategy.
-    // ─────────────────────────────────────────────────────────────────
+    // 8-second idle formatter: blur/focus each reset the timer,
+    // drop overrides to 400ms for quick structural fixes.
     this.editor.on('blur', () => {
       clearTimeout(this.formatterTimer);
       this.formatterTimer = setTimeout(runFormatter, 8000);

@@ -37,6 +37,9 @@ yarn-error.log
 testem.log
 /typings
 
+# Eval suite run results
+eval-suite/results/
+
 # System files
 .DS_Store
 Thumbs.db

@@ -84,8 +84,8 @@ $panel-width: 380px;
       padding: 4px 6px; border-bottom: 2px solid $gray-ddd; border-radius: 4px;
       &:first-child { margin-top: 0; }
     }
-    h2 { font-size: 16px; font-weight: bold; color: $primary; padding: 3px 6px; border-radius: 4px; }
-    h3 { font-size: 14px; font-weight: bold; color: $gray-555; padding: 2px 6px; border-radius: 4px; }
+    h2 { font-size: 16px; font-weight: bold; color: $primary; padding: 3px 6px 3px 1.5em; border-radius: 4px; }
+    h3 { font-size: 14px; font-weight: bold; color: $gray-555; padding: 2px 6px 2px 1.5em; border-radius: 4px; }
 
     ol, ul { padding-left: 1.5em; }
     li { margin: 2px 0; padding: 2px 6px; border-radius: 4px; }
@@ -187,6 +187,42 @@ $panel-width: 380px;
   border-radius: 4px;
   background: $primary-light;
   opacity: 0.6;
+}
+
+// Section drag — custom mousedown/mousemove/mouseup system for headings
+.section-dragging {
+  opacity: 0.3;
+  transition: opacity 100ms ease;
+}
+
+.section-drop-indicator {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 10;
+  height: 4px;
+  border-radius: 2px;
+  background: $primary;
+  opacity: 0.7;
+}
+
+.section-drag-clone {
+  position: absolute;
+  pointer-events: none;
+  z-index: 100;
+  padding: 4px 12px;
+  background: $primary-light;
+  border: 1px solid $primary;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: bold;
+  color: $primary;
+  white-space: nowrap;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  opacity: 0.9;
 }
 
 // Bubble toolbar (floating menu on text selection)
