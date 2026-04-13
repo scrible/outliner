@@ -176,6 +176,19 @@ $panel-width: 380px;
   }
 }
 
+// Citation drop preview — outline box showing where a citation will be inserted
+.citation-drop-preview {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 2;
+  height: 28px;
+  border: 2px dashed $primary;
+  border-radius: 4px;
+  background: $primary-light;
+  opacity: 0.6;
+}
+
 // Bubble toolbar (floating menu on text selection)
 .bubble-toolbar {
   background: #1e293b;

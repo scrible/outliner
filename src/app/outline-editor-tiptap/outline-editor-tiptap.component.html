@@ -93,7 +93,10 @@
           </h3>
           <div class="source-detail-meta">{{ selectedSource.author }} &middot; {{ selectedSource.date }}</div>
           <p class="source-detail-summary">{{ selectedSource.summary }}</p>
-          <button class="btn btn-primary btn-full" (click)="insertCitation(selectedSource)">
+          <button class="btn btn-primary btn-full"
+                  (click)="insertCitation(selectedSource)"
+                  (mouseenter)="showCitationDropPreview()"
+                  (mouseleave)="hideCitationDropPreview()">
             <span class="material-icons" aria-hidden="true">format_quote</span> Insert Citation
           </button>
         </div>

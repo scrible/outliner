@@ -36,6 +36,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   private hoveredNode: any = null;
   private hoveredNodePos = -1;
   private highlightOverlay: HTMLElement | null = null;
+  private citationDropPreview: HTMLElement | null = null;
   private formatterTimer: any = null;
 
   // ════════════════════════════════════════════════════════════
@@ -94,6 +95,43 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       content: this.getDemoContent(),
       editorProps: {
         attributes: { class: 'outline-content', role: 'textbox', 'aria-label': 'Outline editor', 'aria-multiline': 'true' },
+        handleDrop: (view, event, slice, moved) => {
+          if (!moved || !slice) return false;
+          // Check if the dragged content contains a heading
+          let hasHeading = false;
+          slice.content.forEach((node: any) => { if (node.type.name === 'heading') hasHeading = true; });
+          if (!hasHeading) return false;
+
+          // Snap drop position to the nearest top-level node boundary
+          const coords = { left: event.clientX, top: event.clientY };
+          const posInfo = view.posAtCoords(coords);
+          if (!posInfo) return false;
+
+          const doc = view.state.doc;
+          const $pos = doc.resolve(posInfo.pos);
+
+          // Walk up to top-level depth, then find the nearest boundary (before or after)
+          let topPos = posInfo.pos;
+          if ($pos.depth > 0) {
+            const topNode = $pos.node(1);
+            const topStart = $pos.before(1);
+            const topEnd = topStart + topNode.nodeSize;
+            // Snap to whichever boundary (before/after) is closer to the cursor
+            const startCoords = view.coordsAtPos(topStart);
+            const endCoords = view.coordsAtPos(topEnd);
+            topPos = Math.abs(event.clientY - startCoords.top) < Math.abs(event.clientY - endCoords.bottom) ? topStart : topEnd;
+          }
+
+          // Delete the source, then insert at the snapped position
+          const { from, to } = view.state.selection;
+          const tr = view.state.tr;
+          tr.delete(from, to);
+          // Adjust insertion position if it was after the deleted range
+          const insertPos = topPos > from ? topPos - (to - from) : topPos;
+          tr.insert(Math.min(insertPos, tr.doc.content.size), slice.content);
+          view.dispatch(tr);
+          return true;
+        },
       },
     });
 
@@ -333,21 +371,28 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       }
     };
 
-    const scheduleFormatter = () => {
+    // ── EXPERIMENTAL: global 8-second idle formatter ──────────────────
+    // On blur, start an 8-second timer that runs the formatter.
+    // Any focus event anywhere in the editor tree cancels the timer.
+    // This replaces the old 300ms debounce-on-blur approach which only
+    // fired reliably after mouseup on the drag handle.
+    // If this doesn't work well in practice, blow this whole block away
+    // and try a different trigger strategy.
+    // ─────────────────────────────────────────────────────────────────
+    this.editor.on('blur', () => {
       clearTimeout(this.formatterTimer);
-      this.formatterTimer = setTimeout(runFormatter, 300);
-    };
+      this.formatterTimer = setTimeout(runFormatter, 8000);
+    });
 
-    // Run on blur (skip if focus moved to drag handle or toolbar)
-    this.editor.on('blur', ({ event }) => {
-      const related = (event as FocusEvent)?.relatedTarget as HTMLElement | null;
-      if (related?.closest('.drag-handle-group, .bubble-toolbar')) return;
-      scheduleFormatter();
+    this.editor.on('focus', () => {
+      clearTimeout(this.formatterTimer);
+      this.formatterTimer = setTimeout(runFormatter, 8000);
     });
 
     // Run after drop to fix headings that land inside lists
     this.editor.view.dom.addEventListener('drop', () => {
-      setTimeout(scheduleFormatter, 100);
+      clearTimeout(this.formatterTimer);
+      this.formatterTimer = setTimeout(runFormatter, 400);
     });
   }
 
@@ -427,18 +472,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     let pos = 0;
     for (let i = 0; i < doc.childCount; i++) {
       const child = doc.child(i);
-      if (child.type.name === 'citation') {
-        const indent = child.attrs['indent'] || 0;
-        if (indent > 1) {
-          let prevIndent = 0;
-          for (let j = i - 1; j >= 0; j--) {
-            if (doc.child(j).type.name === 'citation') { prevIndent = doc.child(j).attrs['indent'] || 0; break; }
-          }
-          if (indent > prevIndent + 1) {
-            this.editor.chain().setTextSelection(pos + 1).updateAttributes('citation', { indent: prevIndent + 1 }).run();
-            return; // restart on next formatter cycle
-          }
-        }
+      if (child.type.name === 'citation' && (child.attrs['indent'] || 0) > 1) {
+        this.editor.chain().setTextSelection(pos + 1).updateAttributes('citation', { indent: 1 }).run();
+        return; // restart on next formatter cycle
       }
       pos += child.nodeSize;
     }
@@ -498,20 +534,8 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   }
 
   insertCitation(source: any) {
-    // Insert after the last content node under the first heading, or at end
-    const doc = this.editor.state.doc;
-    let insertPos = doc.content.size;
-    // Find the end of the last non-empty content
-    for (let i = doc.childCount - 1; i >= 0; i--) {
-      const child = doc.child(i);
-      if (child.textContent.trim() || child.type.name === 'citation') {
-        // Insert after this node
-        let p = 0;
-        for (let j = 0; j <= i; j++) p += doc.child(j).nodeSize;
-        insertPos = p;
-        break;
-      }
-    }
+    this.hideCitationDropPreview();
+    const insertPos = this.getCitationInsertPos();
     this.editor.chain().focus().insertContentAt(insertPos, {
       type: 'citation',
       attrs: { sourceUrl: source.url, sourceTitle: source.title, sourceAuthor: source.author },
@@ -525,6 +549,53 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     const date = source.date || new Date().getFullYear().toString();
     const accessed = new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
     return `${author}. ${title}. ${date}. Web. ${accessed}.`;
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Citation drop preview — shows where "Insert Citation" will land
+  // ════════════════════════════════════════════════════════════
+  private getCitationInsertPos(): number {
+    const doc = this.editor.state.doc;
+    let insertPos = doc.content.size;
+    for (let i = doc.childCount - 1; i >= 0; i--) {
+      const child = doc.child(i);
+      if (child.textContent.trim() || child.type.name === 'citation') {
+        let p = 0;
+        for (let j = 0; j <= i; j++) p += doc.child(j).nodeSize;
+        insertPos = p;
+        break;
+      }
+    }
+    return insertPos;
+  }
+
+  showCitationDropPreview() {
+    const view = this.editor.view;
+    const insertPos = this.getCitationInsertPos();
+
+    // Use ProseMirror's coordsAtPos for exact insertion point coordinates
+    const coords = view.coordsAtPos(insertPos);
+    const pm = view.dom;
+    const wrapper = pm.closest('.editor-wrapper') as HTMLElement;
+    if (!wrapper) return;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const pmRect = pm.getBoundingClientRect();
+
+    if (!this.citationDropPreview) {
+      this.citationDropPreview = document.createElement('div');
+      this.citationDropPreview.className = 'citation-drop-preview';
+      wrapper.appendChild(this.citationDropPreview);
+    }
+
+    const preview = this.citationDropPreview;
+    preview.style.top = (coords.bottom - wrapperRect.top + 4) + 'px';
+    preview.style.left = (pmRect.left - wrapperRect.left) + 'px';
+    preview.style.width = pmRect.width + 'px';
+    preview.style.display = 'block';
+  }
+
+  hideCitationDropPreview() {
+    if (this.citationDropPreview) this.citationDropPreview.style.display = 'none';
   }
 
   // ════════════════════════════════════════════════════════════

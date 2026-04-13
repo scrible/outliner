@@ -13,6 +13,7 @@
  */
 import { Node, mergeAttributes } from '@tiptap/core';
 import { Plugin } from '@tiptap/pm/state';
+import { ReplaceStep, ReplaceAroundStep } from '@tiptap/pm/transform';
 
 export const Citation = Node.create({
   name: 'citation',
@@ -72,7 +73,7 @@ export const Citation = Node.create({
         if (!editor.isActive('citation')) return false;
         const attrs = editor.getAttributes('citation');
         const currentIndent = attrs['indent'] || 0;
-        return editor.chain().updateAttributes('citation', { indent: Math.min(currentIndent + 1, 5) }).run();
+        return editor.chain().updateAttributes('citation', { indent: Math.min(currentIndent + 1, 1) }).run();
       },
       'Shift-Tab': ({ editor }) => {
         if (!editor.isActive('citation')) return false;
@@ -92,11 +93,11 @@ export const Citation = Node.create({
     return [
       new Plugin({
         filterTransaction: (tr: any) => {
-          // Allow non-doc-changing transactions (selection, etc.)
           if (!tr.docChanged) return true;
-          // Check if any step modifies a citation node's content
+          // Block content replacement inside citations, but allow attribute changes (indent)
           let blockEdit = false;
           tr.steps.forEach((step: any) => {
+            if (!(step instanceof ReplaceStep || step instanceof ReplaceAroundStep)) return;
             if (step.from !== undefined) {
               const $from = tr.docs[0]?.resolve?.(step.from);
               if ($from?.parent?.type === citationType) {
