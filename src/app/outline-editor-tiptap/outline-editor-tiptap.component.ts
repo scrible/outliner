@@ -4,6 +4,9 @@ import { Editor, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import BubbleMenu from '@tiptap/extension-bubble-menu';
 import DragHandle from '@tiptap/extension-drag-handle';
+import Collaboration from '@tiptap/extension-collaboration';
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
 import { TiptapEditorDirective, TiptapBubbleMenuDirective, Citation } from '../shared/tiptap';
 
 @Component({
@@ -20,6 +23,12 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   selectedSource: any = null;
   exportToastVisible = false;
   pasteShortcut = typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '\u2318V' : 'Ctrl+V';
+
+  // Yjs collaborative editing
+  private ydoc = new Y.Doc();
+  private wsProvider: WebsocketProvider | null = null;
+  private readonly yjsRoom = 'outline-demo'; // TODO: derive from outline ID
+  private readonly yjsUrl = 'ws://localhost:1234'; // TODO: use wss://local.scrible.com/ws/yjs/ in production
 
   sampleSources = [
     { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024',
@@ -95,6 +104,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           },
         }),
         Citation,
+        Collaboration.configure({
+          document: this.ydoc,
+        }),
         this.createKeyboardGuards(),
         DragHandle.configure({
           render: () => this.createDragHandleElement(),
@@ -110,10 +122,18 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           nested: true,
         }),
       ],
-      content: this.getDemoContent(),
       editorProps: {
         attributes: { class: 'outline-content', role: 'textbox', 'aria-label': 'Outline editor', 'aria-multiline': 'true' },
       },
+    });
+
+    // Connect to y-websocket for collaborative editing.
+    // If the Yjs doc is empty (first connect), seed it with demo content.
+    this.wsProvider = new WebsocketProvider(this.yjsUrl, this.yjsRoom, this.ydoc);
+    this.wsProvider.on('sync', (synced: boolean) => {
+      if (synced && this.editor.isEmpty) {
+        this.editor.commands.setContent(this.getDemoContent());
+      }
     });
 
     // Hide the drag handle wrapper on load — the plugin positions it at 0,0
@@ -134,6 +154,8 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
     if (this.sectionDrag) this.cleanupSectionDrag();
     this.highlightOverlay?.remove();
     this.citationDropPreview?.remove();
+    this.wsProvider?.destroy();
+    this.ydoc?.destroy();
     this.editor?.destroy();
   }
 
