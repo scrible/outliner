@@ -28,6 +28,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   // Read-only mode — set via @Input or auto-set on disconnect timeout
   @Input() readOnly = false;
+
+  // Citation removal confirmation dialog
+  citationRemoveConfirm: { pos: number; text: string } | null = null;
   syncStatus: 'connecting' | 'synced' | 'disconnected' | 'connection-error' = 'connecting';
   private disconnectTimer: any = null;
   private readonly disconnectTimeoutMs = 8000;
@@ -639,7 +642,23 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   private setupCitationClickHandling() {
     this.editor.on('create', ({ editor }) => {
       editor.view.dom.addEventListener('click', (e: MouseEvent) => {
-        const citationEl = (e.target as HTMLElement).closest('.citation-node');
+        const target = e.target as HTMLElement;
+
+        // Handle remove button click (× pseudo-element, right 28px of citation)
+        const citationForRemove = target.closest('.citation-node') as HTMLElement;
+        if (citationForRemove && !this.readOnly && this.syncStatus !== 'connection-error') {
+          const rect = citationForRemove.getBoundingClientRect();
+          if (e.clientX > rect.right - 28) {
+            e.stopPropagation();
+            // Find the citation's text — used to relocate it on confirm
+            const text = citationForRemove.textContent || '';
+            this.citationRemoveConfirm = { pos: -1, text };
+            this.cdr.detectChanges();
+            return;
+          }
+        }
+
+        const citationEl = target.closest('.citation-node');
         if (!citationEl) return;
         // Place cursor inside for Tab/Shift-Tab
         const pos = editor.view.posAtDOM(citationEl, 0);
@@ -653,6 +672,47 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
         if (source) { this.showPreview = true; this.openSourceDetail(source); }
       });
     });
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Citation removal — converts citation to freetext
+  // ════════════════════════════════════════════════════════════
+  confirmRemoveCitation() {
+    if (!this.citationRemoveConfirm) return;
+    const { text } = this.citationRemoveConfirm;
+    // Re-find the citation by scanning the doc (position may have shifted)
+    const doc = this.editor.state.doc;
+    let citationPos = -1;
+    let citationNode: any = null;
+    doc.descendants((node: any, pos: number) => {
+      if (citationNode) return false;
+      if (node.type.name === 'citation' && node.textContent === text) {
+        citationPos = pos;
+        citationNode = node;
+        return false;
+      }
+      return true;
+    });
+    if (citationPos < 0 || !citationNode) {
+      this.citationRemoveConfirm = null;
+      return;
+    }
+    // Replace citation with a bullet list item containing its text
+    this.editor.chain()
+      .deleteRange({ from: citationPos, to: citationPos + citationNode.nodeSize })
+      .insertContentAt(citationPos, {
+        type: 'bulletList',
+        content: [{
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] }],
+        }],
+      })
+      .run();
+    this.citationRemoveConfirm = null;
+  }
+
+  cancelRemoveCitation() {
+    this.citationRemoveConfirm = null;
   }
 
   // ════════════════════════════════════════════════════════════

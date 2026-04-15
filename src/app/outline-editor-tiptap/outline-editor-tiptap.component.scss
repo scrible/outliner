@@ -93,8 +93,9 @@ $panel-width: 380px;
 
     // Citation custom node
     .citation-node {
+      position: relative;
       border-left: 3px solid $accent-border;
-      padding: 5px 10px 5px 34px; // left padding absorbs the indent (avoids gap where handle disappears)
+      padding: 5px 28px 5px 34px; // right padding for remove button
       margin: 4px 0;
       background: $accent-light;
       color: #78600e;
@@ -103,7 +104,31 @@ $panel-width: 380px;
       border-radius: 0 4px 4px 0;
       cursor: pointer;
       &:hover { background: darken($accent-light, 3%); }
+      // Loading state
+      &.citation-loading { opacity: 0.6; }
+      &.citation-loading::before {
+        content: '';
+        position: absolute; top: 50%; right: 8px;
+        width: 14px; height: 14px; margin-top: -7px;
+        border: 2px solid $accent-border; border-top-color: transparent;
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
     }
+    // Remove button — visible on hover, hidden in read-only
+    .citation-node:not(.citation-loading)::after {
+      content: '\00d7'; // ×
+      position: absolute; top: 4px; right: 6px;
+      width: 18px; height: 18px; line-height: 18px; text-align: center;
+      font-size: 14px; font-style: normal; font-weight: bold;
+      color: $gray-aaa; cursor: pointer; border-radius: 3px;
+      opacity: 0; transition: opacity 0.15s;
+      pointer-events: auto;
+    }
+    .citation-node:hover::after { opacity: 1; }
+    .citation-node:hover::after:hover { color: #991b1b; background: rgba(153, 27, 27, 0.08); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    // Remove button visibility is controlled by the read-only section below
 
     // Fallback for any remaining blockquotes
     blockquote {
@@ -306,6 +331,30 @@ $panel-width: 380px;
   .source-detail-summary { font-size: 13px; font-style: italic; color: $gray-555; line-height: 1.6; }
 }
 
+// Citation removal confirmation dialog
+.confirm-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.3); z-index: 30000;
+  display: flex; align-items: center; justify-content: center;
+}
+.confirm-dialog {
+  background: white; border-radius: 8px; padding: 20px 24px;
+  max-width: 420px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+.confirm-message { font-size: 15px; font-weight: 600; color: $gray-333; margin: 0 0 8px; }
+.confirm-preview {
+  font-size: 13px; font-style: italic; color: #78600e;
+  background: $accent-light; border-left: 3px solid $accent-border;
+  padding: 6px 10px; border-radius: 0 4px 4px 0; margin: 0 0 16px;
+  max-height: 60px; overflow: hidden; text-overflow: ellipsis;
+}
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn-danger {
+  background: #dc2626; color: white; border: none;
+  padding: 6px 14px; border-radius: 4px; font-size: 13px; cursor: pointer;
+  &:hover { background: #b91c1c; }
+}
+
 // Toast
 .export-toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -342,6 +391,7 @@ $panel-width: 380px;
     display: none !important;
   }
   .ProseMirror { cursor: default; }
+  .citation-node::after { display: none !important; }
 }
 
 // Yjs collaboration cursors

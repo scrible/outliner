@@ -27,6 +27,15 @@ export const Citation = Node.create({
       sourceUrl: { default: null },
       sourceTitle: { default: null },
       sourceAuthor: { default: null },
+      entryId: { default: null },
+      libraryId: { default: null },
+      citationHtml: { default: null },
+      citationLoading: {
+        default: false,
+        // Don't serialize loading state to HTML
+        renderHTML: () => ({}),
+        parseHTML: () => false,
+      },
       indent: {
         default: 0,
         renderHTML: (attributes: any) => {
@@ -46,14 +55,16 @@ export const Citation = Node.create({
   },
 
   renderHTML({ HTMLAttributes, node }) {
+    const classes = ['citation-node'];
+    if (node.attrs['citationLoading']) classes.push('citation-loading');
     return ['div', mergeAttributes(HTMLAttributes, {
       'data-type': 'citation',
       'data-source-url': node.attrs['sourceUrl'] || '',
       'data-source-title': node.attrs['sourceTitle'] || '',
       'data-source-author': node.attrs['sourceAuthor'] || '',
-      class: 'citation-node',
-      // Note: NOT contenteditable=false — cursor placement allowed for Tab indent
-      // Text input is blocked via addInputRules returning empty + keyboard shortcuts
+      'data-entry-id': node.attrs['entryId'] || '',
+      'data-library-id': node.attrs['libraryId'] || '',
+      class: classes.join(' '),
     }), 0];
   },
 

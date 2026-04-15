@@ -115,6 +115,20 @@
     </aside>
   }
 
+  @if (citationRemoveConfirm) {
+    <div class="confirm-overlay" (click)="cancelRemoveCitation()">
+      <div class="confirm-dialog" (click)="$event.stopPropagation()" role="alertdialog"
+           aria-label="Remove citation confirmation">
+        <p class="confirm-message">Remove this citation and convert to plain text?</p>
+        <p class="confirm-preview">{{ citationRemoveConfirm.text }}</p>
+        <div class="confirm-actions">
+          <button class="btn btn-ghost" (click)="cancelRemoveCitation()">Cancel</button>
+          <button class="btn btn-danger" (click)="confirmRemoveCitation()">Remove Citation</button>
+        </div>
+      </div>
+    </div>
+  }
+
   @if (exportToastVisible) {
     <div class="export-toast" role="alert">
       <span class="material-icons" aria-hidden="true">check_circle</span>
