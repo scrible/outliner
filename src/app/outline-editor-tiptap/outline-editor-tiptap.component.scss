@@ -323,6 +323,27 @@ $panel-width: 380px;
   to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
 
+// ─── Sync status indicators ──────────────────────────────
+.sync-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; padding: 4px 10px; border-radius: 4px;
+  .material-icons { font-size: 16px; }
+}
+.sync-status-error {
+  background: #fef2f2; color: #991b1b; border: 1px solid #fecaca;
+}
+.sync-status-readonly {
+  background: $gray-f5; color: $gray-666; border: 1px solid $gray-ddd;
+}
+
+// ─── Read-only mode ──────────────────────────────────────
+.outline-shell[data-read-only] {
+  .drag-handle-group, .hover-overlay, .citation-drop-preview, .section-drag-clone, .section-drop-indicator {
+    display: none !important;
+  }
+  .ProseMirror { cursor: default; }
+}
+
 // Yjs collaboration cursors
 .ProseMirror-yjs-cursor {
   position: relative;

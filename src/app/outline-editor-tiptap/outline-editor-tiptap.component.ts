@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ViewEncapsulation } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input, ViewEncapsulation, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { Editor, Extension } from '@tiptap/core';
@@ -26,12 +26,18 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   exportToastVisible = false;
   pasteShortcut = typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '\u2318V' : 'Ctrl+V';
 
+  // Read-only mode — set via @Input or auto-set on disconnect timeout
+  @Input() readOnly = false;
+  syncStatus: 'connecting' | 'synced' | 'disconnected' | 'connection-error' = 'connecting';
+  private disconnectTimer: any = null;
+  private readonly disconnectTimeoutMs = 8000;
+
   // Yjs collaborative editing
   private ydoc = new Y.Doc();
   private wsProvider: WebsocketProvider | null = null;
   private readonly yjsUrl = 'ws://localhost:1234';
 
-  constructor(private route: ActivatedRoute) {}
+  constructor(private route: ActivatedRoute, private cdr: ChangeDetectorRef) {}
 
   sampleSources = [
     { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024',
@@ -159,6 +165,30 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       }
     });
 
+    // Connection status tracking — auto-readonly after 8s disconnect.
+    this.wsProvider.on('status', ({ status }: { status: string }) => {
+      if (status === 'disconnected') {
+        this.syncStatus = 'disconnected';
+        this.disconnectTimer = setTimeout(() => {
+          this.syncStatus = 'connection-error';
+          this.editor.setEditable(false);
+          this.cdr.detectChanges();
+        }, this.disconnectTimeoutMs);
+      } else if (status === 'connected') {
+        clearTimeout(this.disconnectTimer);
+        this.syncStatus = 'synced';
+        if (!this.readOnly) {
+          this.editor.setEditable(true);
+        }
+        this.cdr.detectChanges();
+      }
+    });
+
+    // Apply initial read-only state.
+    if (this.readOnly) {
+      this.editor.setEditable(false);
+    }
+
     // Hide the drag handle wrapper on load — the plugin positions it at 0,0
     // before any mouse interaction. We show it on the first onNodeChange.
     const handleGroup = this.editor.view.dom.parentElement?.querySelector('.drag-handle-group');
@@ -178,6 +208,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     clearTimeout(this.formatterTimer);
+    clearTimeout(this.disconnectTimer);
     if (this.sectionDrag) this.cleanupSectionDrag();
     this.highlightOverlay?.remove();
     this.citationDropPreview?.remove();

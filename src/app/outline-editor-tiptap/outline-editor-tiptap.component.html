@@ -1,4 +1,4 @@
-<div class="outline-shell" [class.preview-open]="showPreview">
+<div class="outline-shell" [class.preview-open]="showPreview" [attr.data-read-only]="readOnly || syncStatus === 'connection-error' || null">
   <div class="editor-panel">
     <header class="toolbar">
       <div class="toolbar-left">
@@ -7,6 +7,15 @@
         <h1 class="app-title" style="display:none">Outline Editor</h1>
       </div>
       <div class="toolbar-right">
+        @if (syncStatus === 'connection-error') {
+          <span class="sync-status sync-status-error" role="alert">
+            <span class="material-icons" aria-hidden="true">cloud_off</span> Connection lost
+          </span>
+        } @else if (readOnly) {
+          <span class="sync-status sync-status-readonly">
+            <span class="material-icons" aria-hidden="true">visibility</span> View only
+          </span>
+        }
         <button class="btn btn-ghost" (click)="showPreview = !showPreview" [class.active]="showPreview"
                 aria-label="Toggle source panel">
           <span class="material-icons" aria-hidden="true">web</span> Sources
@@ -18,8 +27,8 @@
       <div class="editor-wrapper">
         <div tiptap [editor]="editor" class="tiptap-host"></div>
 
-        <!-- Bubble menu (floating toolbar on text selection) -->
-        <div tiptapBubbleMenu [editor]="editor" class="bubble-toolbar" *ngIf="editor">
+        <!-- Bubble menu (floating toolbar on text selection) — hidden in read-only -->
+        <div tiptapBubbleMenu [editor]="editor" class="bubble-toolbar" *ngIf="editor && !readOnly && syncStatus !== 'connection-error'">
           <button [class.active]="isHeadingActive(1)" (click)="toggleHeading(1)" title="Heading 1">H1</button>
           <button [class.active]="isHeadingActive(2)" (click)="toggleHeading(2)" title="Heading 2">H2</button>
           <button [class.active]="isHeadingActive(3)" (click)="toggleHeading(3)" title="Heading 3">H3</button>
@@ -93,12 +102,14 @@
           </h3>
           <div class="source-detail-meta">{{ selectedSource.author }} &middot; {{ selectedSource.date }}</div>
           <p class="source-detail-summary">{{ selectedSource.summary }}</p>
-          <button class="btn btn-primary btn-full"
-                  (click)="insertCitation(selectedSource)"
-                  (mouseenter)="showCitationDropPreview()"
-                  (mouseleave)="hideCitationDropPreview()">
-            <span class="material-icons" aria-hidden="true">format_quote</span> Insert Citation
-          </button>
+          @if (!readOnly && syncStatus !== 'connection-error') {
+            <button class="btn btn-primary btn-full"
+                    (click)="insertCitation(selectedSource)"
+                    (mouseenter)="showCitationDropPreview()"
+                    (mouseleave)="hideCitationDropPreview()">
+              <span class="material-icons" aria-hidden="true">format_quote</span> Insert Citation
+            </button>
+          }
         </div>
       }
     </aside>
