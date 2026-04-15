@@ -1,5 +1,6 @@
 import { Component, OnInit, OnDestroy, ViewEncapsulation } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { ActivatedRoute } from '@angular/router';
 import { Editor, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import BubbleMenu from '@tiptap/extension-bubble-menu';
@@ -7,6 +8,7 @@ import DragHandle from '@tiptap/extension-drag-handle';
 import Collaboration from '@tiptap/extension-collaboration';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
+import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { TiptapEditorDirective, TiptapBubbleMenuDirective, Citation } from '../shared/tiptap';
 
 @Component({
@@ -27,8 +29,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   // Yjs collaborative editing
   private ydoc = new Y.Doc();
   private wsProvider: WebsocketProvider | null = null;
-  private readonly yjsRoom = 'outline-demo'; // TODO: derive from outline ID
-  private readonly yjsUrl = 'ws://localhost:1234'; // TODO: use wss://local.scrible.com/ws/yjs/ in production
+  private readonly yjsUrl = 'ws://localhost:1234';
+
+  constructor(private route: ActivatedRoute) {}
 
   sampleSources = [
     { title: 'Mars Exploration Program — NASA', url: 'https://mars.nasa.gov/', author: 'NASA', date: '2024',
@@ -88,13 +91,38 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   // Editor initialization
   // ════════════════════════════════════════════════════════════
   ngOnInit() {
+    // Derive room name from route param, defaulting to 'outline-demo'.
+    const outlineId = this.route.snapshot.paramMap.get('outlineId') || 'demo';
+    const yjsRoom = `outline-${outlineId}`;
+
+    // Connect provider before editor so Collaboration can use it immediately.
+    this.wsProvider = new WebsocketProvider(this.yjsUrl, yjsRoom, this.ydoc);
+
+    // Cursor presence as a custom extension wrapping yCursorPlugin.
+    const cursorAwareness = this.wsProvider.awareness;
+    const userColor = '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+    cursorAwareness.setLocalStateField('user', { name: `User ${this.ydoc.clientID}`, color: userColor });
+
+    const CollaborationCursor = Extension.create({
+      name: 'collaborationCursor',
+      addProseMirrorPlugins() {
+        return [yCursorPlugin(cursorAwareness)];
+      },
+    });
+
     this.editor = new Editor({
       extensions: [
+        // Collaboration must come first — it manages the document.
+        Collaboration.configure({
+          document: this.ydoc,
+        }),
+        CollaborationCursor,
         StarterKit.configure({
           heading: { levels: [1, 2, 3] },
           bulletList: { keepMarks: true, keepAttributes: true },
           orderedList: { keepMarks: true, keepAttributes: true },
           dropcursor: { color: false, width: 2, class: 'drop-cursor-box' },
+          undoRedo: false, // Yjs manages undo via Collaboration extension
         }),
         BubbleMenu.configure({
           shouldShow: ({ editor, state }) => {
@@ -104,9 +132,6 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           },
         }),
         Citation,
-        Collaboration.configure({
-          document: this.ydoc,
-        }),
         this.createKeyboardGuards(),
         DragHandle.configure({
           render: () => this.createDragHandleElement(),
@@ -127,9 +152,7 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       },
     });
 
-    // Connect to y-websocket for collaborative editing.
-    // If the Yjs doc is empty (first connect), seed it with demo content.
-    this.wsProvider = new WebsocketProvider(this.yjsUrl, this.yjsRoom, this.ydoc);
+    // Seed demo content on first sync if doc is empty.
     this.wsProvider.on('sync', (synced: boolean) => {
       if (synced && this.editor.isEmpty) {
         this.editor.commands.setContent(this.getDemoContent());
