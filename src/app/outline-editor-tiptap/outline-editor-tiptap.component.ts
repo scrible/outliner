@@ -167,6 +167,10 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
       this.dragHandleWrapper.style.display = 'none';
     }
 
+    // Expose for Playwright test access
+    (window as any).__tiptapEditor = this.editor;
+    (window as any).__yjsProvider = this.wsProvider;
+
     this.setupSourceDropHandling();
     this.setupCitationClickHandling();
     this.setupFormatter();
