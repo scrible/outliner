@@ -23,7 +23,8 @@
       "dom"
     ],
     "paths": {
-      "@scrible/tiptap-outline-numbering": ["./packages/tiptap-outline-numbering/src/index.ts"]
+      "@scrible/tiptap-outline-numbering": ["./packages/tiptap-outline-numbering/src/index.ts"],
+      "@scrible/tiptap-academic-outline": ["./packages/tiptap-academic-outline/src/index.ts"]
     }
   },
   "angularCompilerOptions": {
