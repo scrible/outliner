@@ -21,12 +21,7 @@
     "lib": [
       "ES2022",
       "dom"
-    ],
-    "paths": {
-      "@bwthomas/outline-numbering": ["./packages/outline-numbering/src/index.ts"],
-      "@bwthomas/outline-numbering/tiptap": ["./packages/outline-numbering/src/tiptap.ts"],
-      "@bwthomas/tiptap-academic-outline": ["./packages/tiptap-academic-outline/src/index.ts"]
-    }
+    ]
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,

@@ -8,9 +8,7 @@
     ]
   },
   "include": [
-    "src/test.ts",
     "src/**/*.spec.ts",
-    "src/**/*.d.ts",
-    "packages/**/*.spec.ts"
+    "src/**/*.d.ts"
   ]
 }
