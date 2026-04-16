@@ -15,7 +15,7 @@ import {
   KeyboardGuards,
   AcademicFormatter,
   OutlineNumbering,
-} from '@scrible/tiptap-academic-outline';
+} from '@bwthomas/tiptap-academic-outline';
 
 @Component({
   selector: 'app-outline-editor-tiptap',

@@ -1,7 +1,7 @@
 {
-  "name": "@scrible/tiptap-academic-outline",
+  "name": "@bwthomas/tiptap-academic-outline",
   "version": "0.1.0",
-  "description": "TipTap extension suite for academic outline editing: Purdue OWL numbering, citations, keyboard guards, structural formatter",
+  "description": "Tiptap extension suite for academic outline editing: alphanumeric numbering, citations, keyboard guards, structural formatter",
   "license": "MIT",
   "main": "src/index.ts",
   "peerDependencies": {
@@ -9,6 +9,6 @@
     "@tiptap/pm": "^3.0.0"
   },
   "dependencies": {
-    "@scrible/tiptap-outline-numbering": "^0.1.0"
+    "@bwthomas/outline-numbering": "^0.1.0"
   }
 }
