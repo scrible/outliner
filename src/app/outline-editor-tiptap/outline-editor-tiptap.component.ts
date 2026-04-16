@@ -9,7 +9,13 @@ import Collaboration from '@tiptap/extension-collaboration';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { TiptapEditorDirective, TiptapBubbleMenuDirective, Citation } from '../shared/tiptap';
+import { TiptapEditorDirective, TiptapBubbleMenuDirective } from '../shared/tiptap';
+import {
+  Citation,
+  KeyboardGuards,
+  AcademicFormatter,
+  OutlineNumbering,
+} from '@scrible/tiptap-academic-outline';
 
 @Component({
   selector: 'app-outline-editor-tiptap',
@@ -58,7 +64,6 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   private hoveredNodePos = -1;
   private highlightOverlay: HTMLElement | null = null;
   private citationDropPreview: HTMLElement | null = null;
-  private formatterTimer: any = null;
   private sectionDrag: {
     sectionFrom: number;
     sectionTo: number;
@@ -141,7 +146,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
           },
         }),
         Citation,
-        this.createKeyboardGuards(),
+        KeyboardGuards,
+        OutlineNumbering,
+        AcademicFormatter,
         DragHandle.configure({
           render: () => this.createDragHandleElement(),
           onNodeChange: ({ node }) => {
@@ -206,11 +213,9 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
     this.setupSourceDropHandling();
     this.setupCitationClickHandling();
-    this.setupFormatter();
   }
 
   ngOnDestroy() {
-    clearTimeout(this.formatterTimer);
     clearTimeout(this.disconnectTimer);
     if (this.sectionDrag) this.cleanupSectionDrag();
     this.highlightOverlay?.remove();
@@ -581,38 +586,6 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
   }
 
   // ════════════════════════════════════════════════════════════
-  // Keyboard guards
-  // ════════════════════════════════════════════════════════════
-  private createKeyboardGuards(): Extension {
-    return Extension.create({
-      name: 'keyboardGuards',
-      addKeyboardShortcuts() {
-        return {
-          // Backspace: at start of list item, outdent nested or block top-level.
-          // BUT allow deleting empty list items (critical for usability).
-          'Backspace': ({ editor }) => {
-            const { $from, empty } = editor.state.selection;
-            if (!empty) return false;
-            if ($from.parentOffset !== 0) return false;
-            if ($from.parent.type.name !== 'paragraph') return false;
-            const listItem = $from.node($from.depth - 1);
-            if (listItem?.type.name !== 'listItem') return false;
-            // Allow deleting empty list items
-            if (listItem.textContent.trim() === '') return false;
-            // Nested → outdent; top-level → block
-            let listDepth = 0;
-            for (let d = $from.depth; d > 0; d--) {
-              if ($from.node(d).type.name === 'listItem') listDepth++;
-            }
-            if (listDepth > 1) return editor.chain().liftListItem('listItem').run();
-            return true;
-          },
-        };
-      },
-    });
-  }
-
-  // ════════════════════════════════════════════════════════════
   // Source drop handling
   // ════════════════════════════════════════════════════════════
   private setupSourceDropHandling() {
@@ -713,152 +686,6 @@ export class OutlineEditorTiptapComponent implements OnInit, OnDestroy {
 
   cancelRemoveCitation() {
     this.citationRemoveConfirm = null;
-  }
-
-  // ════════════════════════════════════════════════════════════
-  // Formatter — structural cleanup
-  // Runs on blur (debounced) and after certain editor transactions
-  // ════════════════════════════════════════════════════════════
-  private setupFormatter() {
-    let isFormatting = false;
-
-    const runFormatter = () => {
-      if (isFormatting || !this.editor || this.editor.isDestroyed || this.sectionDrag) return;
-      isFormatting = true;
-      try {
-        this.formatBareText();
-        this.formatLiftHeadings();
-        this.formatRemoveEmptyTrailing();
-        this.formatRemoveEmptyListItems();
-        this.formatCapCitationIndent();
-        this.formatFixNesting();
-      } finally {
-        isFormatting = false;
-      }
-    };
-
-    // 8-second idle formatter: blur/focus each reset the timer,
-    // drop overrides to 400ms for quick structural fixes.
-    this.editor.on('blur', () => {
-      clearTimeout(this.formatterTimer);
-      this.formatterTimer = setTimeout(runFormatter, 8000);
-    });
-
-    this.editor.on('focus', () => {
-      clearTimeout(this.formatterTimer);
-      this.formatterTimer = setTimeout(runFormatter, 8000);
-    });
-
-    // Run after drop to fix headings that land inside lists
-    this.editor.view.dom.addEventListener('drop', () => {
-      clearTimeout(this.formatterTimer);
-      this.formatterTimer = setTimeout(runFormatter, 400);
-    });
-  }
-
-  private formatBareText() {
-    for (let iter = 0; iter < 20; iter++) {
-      const doc = this.editor.state.doc;
-      let pos = 0, found = false;
-      for (let i = 0; i < doc.childCount; i++) {
-        const child = doc.child(i);
-        if (child.type.name === 'paragraph' && child.textContent.trim()) {
-          let listType = 'bulletList';
-          for (let j = i - 1; j >= 0; j--) {
-            const sib = doc.child(j);
-            if (sib.type.name === 'bulletList' || sib.type.name === 'orderedList') { listType = sib.type.name; break; }
-          }
-          const contentJson = child.content.size > 0 ? child.content.toJSON() : [];
-          this.editor.chain()
-            .deleteRange({ from: pos, to: pos + child.nodeSize })
-            .insertContentAt(pos, { type: listType, content: [{ type: 'listItem', content: [{ type: 'paragraph', content: contentJson }] }] })
-            .run();
-          found = true; break;
-        }
-        pos += child.nodeSize;
-      }
-      if (!found) break;
-    }
-  }
-
-  private formatLiftHeadings() {
-    for (let iter = 0; iter < 10; iter++) {
-      const doc = this.editor.state.doc;
-      let lifted = false;
-      doc.descendants((node: any, pos: number) => {
-        if (lifted) return false;
-        if (node.type.name !== 'heading') return true;
-        const $pos = doc.resolve(pos);
-        for (let d = $pos.depth; d > 0; d--) {
-          if ($pos.node(d).type.name === 'listItem') {
-            this.editor.chain().setTextSelection({ from: pos, to: pos + node.nodeSize }).liftListItem('listItem').run();
-            lifted = true; return false;
-          }
-        }
-        return true;
-      });
-      if (!lifted) break;
-    }
-  }
-
-  private formatRemoveEmptyTrailing() {
-    for (let iter = 0; iter < 5; iter++) {
-      const doc = this.editor.state.doc;
-      if (!doc.lastChild || doc.lastChild.type.name !== 'paragraph' || doc.lastChild.textContent !== '' || doc.childCount <= 1) break;
-      this.editor.chain().deleteRange({ from: doc.content.size - doc.lastChild.nodeSize, to: doc.content.size }).run();
-    }
-  }
-
-  private formatRemoveEmptyListItems() {
-    const doc = this.editor.state.doc;
-    const empties: number[] = [];
-    doc.descendants((node: any, pos: number) => {
-      if (node.type.name === 'listItem' && node.textContent.trim() === '') empties.push(pos);
-      return true;
-    });
-    for (let i = empties.length - 1; i >= 0; i--) {
-      const currentDoc = this.editor.state.doc;
-      const pos = empties[i];
-      if (pos >= currentDoc.content.size) continue;
-      const node = currentDoc.nodeAt(pos);
-      if (node?.type.name === 'listItem' && node.textContent.trim() === '') {
-        this.editor.chain().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
-      }
-    }
-  }
-
-  private formatCapCitationIndent() {
-    const doc = this.editor.state.doc;
-    let pos = 0;
-    for (let i = 0; i < doc.childCount; i++) {
-      const child = doc.child(i);
-      if (child.type.name === 'citation' && (child.attrs['indent'] || 0) > 1) {
-        this.editor.chain().setTextSelection(pos + 1).updateAttributes('citation', { indent: 1 }).run();
-        return; // restart on next formatter cycle
-      }
-      pos += child.nodeSize;
-    }
-  }
-
-  private formatFixNesting() {
-    for (let iter = 0; iter < 10; iter++) {
-      const doc = this.editor.state.doc;
-      let fixed = false;
-      doc.descendants((node: any, pos: number) => {
-        if (fixed) return false;
-        if (node.type.name !== 'listItem') return true;
-        const $pos = doc.resolve(pos);
-        if ($pos.depth < 4) return true;
-        const grandparentLi = $pos.node($pos.depth - 2);
-        if (grandparentLi?.type.name !== 'listItem') return true;
-        if ($pos.index($pos.depth - 2) === 0) {
-          this.editor.chain().setTextSelection(pos + 1).liftListItem('listItem').run();
-          fixed = true; return false;
-        }
-        return true;
-      });
-      if (!fixed) break;
-    }
   }
 
   // ════════════════════════════════════════════════════════════

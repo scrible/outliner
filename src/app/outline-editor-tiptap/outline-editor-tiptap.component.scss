@@ -91,6 +91,22 @@ $panel-width: 380px;
     li { margin: 2px 0; padding: 2px 6px; border-radius: 4px; }
     li p { margin: 0; }
 
+    // Outline numbering — data-outline-marker set by OutlineNumbering plugin
+    ol { list-style: none; }
+    li[data-outline-marker] {
+      position: relative;
+      padding-left: 2.5em;
+      &::before {
+        content: attr(data-outline-marker);
+        position: absolute;
+        left: 0;
+        width: 2em;
+        text-align: right;
+        font-weight: 500;
+        opacity: 0.7;
+      }
+    }
+
     // Citation custom node
     .citation-node {
       position: relative;
